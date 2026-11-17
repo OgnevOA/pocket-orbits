@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Orbits — sound lab</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; background: #0b1020; color: #d9e4f2; margin: 24px; max-width: 980px; }
+  h1 { font-size: 20px; } h2 { font-size: 15px; color: #4fd1ff; margin-top: 22px; }
+  button { font: inherit; color: inherit; background: #16243d; border: 1px solid #2f4468; border-radius: 7px; padding: 6px 11px; cursor: pointer; margin: 2px; }
+  button:hover { background: #1d3152; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+  label { display: flex; gap: 8px; align-items: center; }
+  table { border-collapse: collapse; font: 12px ui-monospace, Menlo, Consolas, monospace; margin-top: 8px; }
+  td, th { padding: 3px 10px; border-bottom: 1px solid #22324d; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .pass { color: #5fe39a; } .fail { color: #ff5d5d; }
+  #checks div { font: 12px ui-monospace, Menlo, Consolas, monospace; }
+</style>
+</head>
+<body>
+<h1>Pocket Orbits — engine sound lab</h1>
+<p>The game's engine voice (<code>js/audio.js</code>). Click a button to hear it. The checks below render the same voice offline and measure it.</p>
+
+<h2>Listen</h2>
+<div class="row" id="engineButtons"></div>
+<div class="row"><button id="launch">▶ Launch sequence (ignite, climb into vacuum, flameout, upper stage)</button><button id="stop">■ Stop</button></div>
+<h2>Live</h2>
+<div class="row">
+  <label>Engine <select id="liveEngine"></select></label>
+  <label>Throttle <input id="liveThrottle" type="range" min="0" max="100" value="0"></label>
+  <label>Air <input id="liveAir" type="range" min="0" max="100" value="100"></label>
+  <button id="liveIgnite">Ignite</button><button id="liveSputter">Flameout</button>
+</div>
+
+<h2>Measured (offline render)</h2>
+<div id="table"></div>
+<div id="checks">Rendering…</div>
+
+<script src="../js/config.js"></script>
+<script src="../js/audio.js"></script>
+<script>
+  const SR = 44100;
+  const engines = Object.entries(SB.CONFIG.parts).filter(([, d]) => d.category === 'engine');
+  const params = (def, throttle, air) => ({
+    level: SB.AudioSynth.levelFor({ firing: throttle > 0, throttle, thrust: def.thrust, air }, SB.CONFIG.audio.vacuumLevel),
+    size: def.sound.size, crackle: def.sound.crackle, whine: def.sound.whine, throttle, air, rate: 1,
+  });
+
+  // ---------------------------------------------------------------- offline analysis
+  async function render(seconds, script) {
+    const ctx = new OfflineAudioContext(1, Math.round(SR * seconds), SR);
+    const bufs = SB.AudioSynth.makeBuffers(ctx);
+    const chain = SB.AudioSynth.buildChain(ctx);
+    chain.engineBus.gain.value = 1;
+    chain.master.gain.value = SB.CONFIG.audio.masterVolume;
+    const v = new SB.AudioSynth.EngineVoice(ctx, chain.engineBus, bufs);
+    script(v, ctx);
+    return (await ctx.startRendering()).getChannelData(0);
+  }
+  const rms = (x, a, b) => { let s = 0; const i0 = Math.floor(a * SR), i1 = Math.floor(b * SR); for (let i = i0; i < i1; i++) s += x[i] * x[i]; return Math.sqrt(s / (i1 - i0)); };
+  const peak = (x) => { let m = 0; for (let i = 0; i < x.length; i++) m = Math.max(m, Math.abs(x[i])); return m; };
+  function goertzel(x, start, N, f) {
+    const w = (2 * Math.PI * f) / SR, c = 2 * Math.cos(w);
+    let s1 = 0, s2 = 0;
+    for (let i = 0; i < N; i++) { const s = x[start + i] + c * s1 - s2; s2 = s1; s1 = s; }
+    return (s1 * s1 + s2 * s2 - c * s1 * s2) / (N * N);
+  }
+  function centroid(x, t) {
+    const start = Math.floor(t * SR), N = 8192;
+    let num = 0, den = 0;
+    for (let k = 0; k < 64; k++) {
+      const f = 40 * Math.pow(12000 / 40, k / 63);
+      const p = goertzel(x, start, N, f) * f; // weight by bin width on a log scale
+      num += f * p; den += p;
+    }
+    return num / den;
+  }
+  const windowMax = (x, a, b, w) => { let m = 0; for (let t = a; t + w <= b; t += w / 2) m = Math.max(m, rms(x, t, t + w)); return m; };
+  const windowMean = (x, a, b, w) => { let s = 0, n = 0; for (let t = a; t + w <= b; t += w) { s += rms(x, t, t + w); n++; } return s / n; };
+
+  async function analyse() {
+    const def = (id) => SB.CONFIG.parts[id];
+    const steady = (id, thr, air, secs) => render(secs || 2, (v) => v.set(params(def(id), thr, air), 0.03, 0));
+    const rows = [];
+    for (const [id, d] of engines) {
+      const sea = await steady(id, 1, 1), vac = await steady(id, 1, 0);
+      rows.push({ id, name: d.name, seaRms: rms(sea, 1, 2), vacRms: rms(vac, 1, 2), seaCent: centroid(sea, 1.2), vacCent: centroid(vac, 1.2), seaPeak: peak(sea) });
+    }
+    const hammer = rows.find((r) => r.id === 'eng_hammer'), wren = rows.find((r) => r.id === 'eng_wren'), anvil = rows.find((r) => r.id === 'eng_anvil');
+    const sweep = [];
+    for (const thr of [0.25, 0.6, 1]) sweep.push(rms(await steady('eng_hammer', thr, 1), 1, 2));
+    const silent = rms(await steady('eng_hammer', 0, 1), 1, 2);
+    // the Sparrow's turbopump tone in vacuum
+    const sp = def('eng_sparrow');
+    const spVac = await steady('eng_sparrow', 1, 0);
+    const wf = 1100 + 1900 * 1 * (1.2 - 0.5 * sp.sound.size);
+    const s0 = Math.floor(1.0 * SR), N = 16384;
+    const tone = goertzel(spVac, s0, N, wf), side = (goertzel(spVac, s0, N, wf * 0.85) + goertzel(spVac, s0, N, wf * 1.15)) / 2;
+    // ignition transient, as the game does it: thump + whoosh while the voice ramps up
+    const ign = await render(2.2, (v) => {
+      v.set(params(def('eng_hammer'), 0, 1), 0.05, 0);
+      v.ignite(1, def('eng_hammer').sound.size, 0.3);
+      v.set(params(def('eng_hammer'), 1, 1), 0.04, 0.3);
+    });
+    const ignPeak = windowMax(ign, 0.3, 0.8, 0.02), ignSteady = windowMean(ign, 1.5, 2.1, 0.02);
+    // flameout: sputter, hold for 0.45 s, then silence (the update loop's sequence)
+    const fo = await render(2.6, (v) => {
+      v.set(params(def('eng_hammer'), 1, 1), 0.03, 0);
+      v.sputter(1.0);
+      v.set(Object.assign(params(def('eng_hammer'), 0, 1), { level: 0 }), 0.09, 1.45);
+    });
+    const foBefore = rms(fo, 0.5, 1.0), foDuring = rms(fo, 1.0, 1.45), foAfter = rms(fo, 2.0, 2.6);
+    // count coughs: each time the level drops from a burst (> 50% of the roar) to a gap (< 30%)
+    let dips = 0, high = true;
+    for (let t = 0.98; t < 1.5; t += 0.01) {
+      const l = rms(fo, t, t + 0.03) / foBefore;
+      if (high && l < 0.3) { dips++; high = false; } else if (!high && l > 0.5) high = true;
+    }
+
+    const checks = [
+      ['Every engine is audible at sea level', rows.every((r) => r.seaRms > 0.02), rows.map((r) => `${r.id} ${r.seaRms.toFixed(3)}`).join(', ')],
+      ['Vacuum is quieter than sea level for every engine', rows.every((r) => r.vacRms < r.seaRms * 0.85), rows.map((r) => `${(r.vacRms / r.seaRms).toFixed(2)}`).join(', ')],
+      ['Vacuum is muffled (lower spectral centroid)', rows.every((r) => r.vacCent < r.seaCent * 0.75), rows.map((r) => `${Math.round(r.seaCent)}→${Math.round(r.vacCent)} Hz`).join(', ')],
+      ['Bigger engines sound deeper (Wren brighter than Anvil)', wren.seaCent > anvil.seaCent * 1.2, `Wren ${Math.round(wren.seaCent)} Hz, Hammer ${Math.round(hammer.seaCent)} Hz, Anvil ${Math.round(anvil.seaCent)} Hz`],
+      ['Bigger engines are louder (Anvil > Hammer > Wren)', anvil.seaRms > hammer.seaRms && hammer.seaRms > wren.seaRms, `${anvil.seaRms.toFixed(3)} > ${hammer.seaRms.toFixed(3)} > ${wren.seaRms.toFixed(3)}`],
+      ['Louder with more throttle (25% < 60% < 100%)', sweep[0] < sweep[1] && sweep[1] < sweep[2], sweep.map((x) => x.toFixed(3)).join(' < ')],
+      ['Silent with the throttle closed', silent < 1e-3, silent.toExponential(2)],
+      ['Sparrow turbopump whine stands out in vacuum', tone > side * 4, `${Math.round(wf)} Hz tone ${(tone / side).toFixed(1)}× its neighbours`],
+      ['Ignition has a transient above the steady roar', ignPeak > ignSteady * 1.25, `peak ${ignPeak.toFixed(3)} vs steady ${ignSteady.toFixed(3)}`],
+      ['Flameout coughs, then falls silent', dips >= 2 && foAfter < foBefore * 0.03 && foDuring > foBefore * 0.1, `${dips} coughs, level ${foBefore.toFixed(3)} → ${foAfter.toExponential(1)}`],
+      ['No clipping, even for the Anvil at full throttle', rows.every((r) => r.seaPeak < 0.99), `max peak ${Math.max(...rows.map((r) => r.seaPeak)).toFixed(3)}`],
+    ];
+    window.AUDIO_CHECK = { checks: checks.map(([name, pass, detail]) => ({ name, pass: !!pass, detail })), rows };
+    document.getElementById('table').innerHTML = '<table><tr><th>Engine</th><th>RMS sea</th><th>RMS vac</th><th>centroid sea</th><th>centroid vac</th><th>peak</th></tr>' +
+      rows.map((r) => `<tr><td>${r.name}</td><td>${r.seaRms.toFixed(3)}</td><td>${r.vacRms.toFixed(3)}</td><td>${Math.round(r.seaCent)} Hz</td><td>${Math.round(r.vacCent)} Hz</td><td>${r.seaPeak.toFixed(3)}</td></tr>`).join('') + '</table>';
+    document.getElementById('checks').innerHTML = window.AUDIO_CHECK.checks.map((c) => `<div class="${c.pass ? 'pass' : 'fail'}">${c.pass ? 'PASS' : 'FAIL'} ${c.name} — ${c.detail}</div>`).join('');
+  }
+  analyse().catch((e) => { window.AUDIO_CHECK = { error: String(e && e.stack || e), checks: [] }; document.getElementById('checks').textContent = 'Error: ' + e; });
+
+  // ---------------------------------------------------------------- listening
+  let live = null;
+  function liveCtx() {
+    if (live) return live;
+    const ctx = new AudioContext();
+    const bufs = SB.AudioSynth.makeBuffers(ctx);
+    const chain = SB.AudioSynth.buildChain(ctx);
+    chain.engineBus.gain.value = 1;
+    chain.master.gain.value = SB.CONFIG.audio.masterVolume;
+    live = { ctx, bufs, chain, voice: new SB.AudioSynth.EngineVoice(ctx, chain.engineBus, bufs) };
+    return live;
+  }
+  function resetVoice() {
+    const L = liveCtx();
+    L.voice.stop();
+    L.voice = new SB.AudioSynth.EngineVoice(L.ctx, L.chain.engineBus, L.bufs);
+    return L;
+  }
+  function playSteady(id, air) {
+    const L = resetVoice(), d = SB.CONFIG.parts[id], t = L.ctx.currentTime + 0.05;
+    L.voice.ignite(1, d.sound.size, t);
+    L.voice.set(params(d, 1, air), 0.04, t);
+    L.voice.set(Object.assign(params(d, 0, air), { level: 0 }), 0.12, t + 3);
+  }
+  function launchSequence() {
+    const L = resetVoice(), t0 = L.ctx.currentTime + 0.05;
+    const H = SB.CONFIG.parts.eng_hammer, S = SB.CONFIG.parts.eng_sparrow;
+    L.voice.ignite(1, H.sound.size, t0);
+    L.voice.set(params(H, 1, 1), 0.04, t0);
+    for (let k = 1; k <= 30; k++) L.voice.set(params(H, 1, Math.max(0, 1 - k / 26)), 0.15, t0 + 1 + k * 0.2);
+    L.voice.sputter(t0 + 8);
+    L.voice.set(Object.assign(params(H, 0, 0), { level: 0 }), 0.09, t0 + 8.45);
+    L.voice.ignite(0.7, S.sound.size, t0 + 9.2);
+    L.voice.set(params(S, 1, 0), 0.04, t0 + 9.2);
+    L.voice.set(params(S, 0.35, 0), 0.3, t0 + 11.5);
+    L.voice.set(Object.assign(params(S, 0, 0), { level: 0 }), 0.1, t0 + 13.5);
+  }
+  const eb = document.getElementById('engineButtons'), sel = document.getElementById('liveEngine');
+  for (const [id, d] of engines) {
+    for (const [air, label] of [[1, 'sea level'], [0, 'vacuum']]) {
+      const b = document.createElement('button');
+      b.textContent = `${d.name.split(' ')[0]} · ${label}`;
+      b.onclick = () => playSteady(id, air);
+      eb.appendChild(b);
+    }
+    const o = document.createElement('option'); o.value = id; o.textContent = d.name; sel.appendChild(o);
+  }
+  sel.value = 'eng_hammer';
+  document.getElementById('launch').onclick = launchSequence;
+  document.getElementById('stop').onclick = () => { if (live) resetVoice(); };
+  const liveUpdate = () => {
+    const L = liveCtx(), d = SB.CONFIG.parts[sel.value];
+    L.voice.set(params(d, document.getElementById('liveThrottle').value / 100, document.getElementById('liveAir').value / 100), 0.08);
+  };
+  for (const id of ['liveThrottle', 'liveAir', 'liveEngine']) document.getElementById(id).addEventListener('input', liveUpdate);
+  document.getElementById('liveIgnite').onclick = () => { const L = liveCtx(); L.voice.ignite(1, SB.CONFIG.parts[sel.value].sound.size); liveUpdate(); };
+  document.getElementById('liveSputter').onclick = () => { const L = liveCtx(); L.voice.sputter(); };
+</script>
+</body>
+</html>

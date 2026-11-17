@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Orbits</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============================== HANGAR ============================== -->
+  <section id="hangar" class="screen">
+    <header class="bar">
+      <div class="brand"><span class="logo"></span>Pocket Orbits <small>Hangar</small></div>
+      <div class="design-controls">
+        <input id="designName" maxlength="40" spellcheck="false" aria-label="Design name" placeholder="Design name">
+        <button id="btnSave" title="Save this design in your browser (Ctrl+S)">Save</button>
+        <span class="sep"></span>
+        <select id="designSelect" aria-label="Saved designs and presets"></select>
+        <button id="btnOpen">Open</button>
+        <button id="btnDelete" class="ghost" title="Delete the selected saved design">Delete</button>
+        <span class="sep"></span>
+        <button id="btnNew" class="ghost">New</button>
+        <button id="btnStarter" class="ghost" title="Load the ready-to-fly two-stage Kestrel">Starter</button>
+      </div>
+      <div class="bar-right">
+        <button id="btnHelpH" class="ghost">Controls &amp; checklist</button>
+        <button id="btnLaunch" class="primary">Launch ▲</button>
+      </div>
+    </header>
+    <div class="hangar-body">
+      <aside id="catalog" class="panel scroll"></aside>
+      <main id="assembly">
+        <canvas id="stackCanvas"></canvas>
+        <div id="selToolbar" class="hidden">
+          <button data-act="up" title="Move up (Alt+↑)">▲ Up</button>
+          <button data-act="down" title="Move down (Alt+↓)">▼ Down</button>
+          <button data-act="remove" class="danger" title="Remove (Delete)">✕ Remove</button>
+        </div>
+        <div class="assembly-hint">Drag parts to snap them into the stack · drag a part off the stack to remove it · click to select</div>
+      </main>
+      <aside id="info" class="panel scroll">
+        <section><h2>Vehicle</h2><div id="stats"></div></section>
+        <section><h2>Staging <button id="btnAutoStage" class="small ghost" title="Restore the default staging order">Auto</button></h2>
+          <p class="note">Stage 1 fires at launch; each Space press fires the next step.</p>
+          <div id="staging"></div></section>
+        <section id="warnings"></section>
+      </aside>
+    </div>
+    <div id="hangarToast" class="toast"></div>
+    <canvas id="dragGhost" width="96" height="112"></canvas>
+  </section>
+
+  <!-- ============================== FLIGHT ============================== -->
+  <section id="flight" class="screen hidden">
+    <canvas id="view"></canvas>
+    <div id="topbar">
+      <div id="situation"></div>
+      <div id="clock"></div>
+      <div id="warpBox">
+        <button id="wDown" title="Slower warp ( , )">◀◀</button>
+        <div class="warp-mid"><b id="warpLabel">1×</b><small id="warpMode">real time</small></div>
+        <button id="wUp" title="Faster warp ( . )">▶▶</button>
+        <button id="wStop" class="small" title="Real time ( / )">1×</button>
+        <div id="warpNote"></div>
+      </div>
+      <div class="top-right">
+        <button id="btnSound" title="Sound on/off (U)">Sound · U</button>
+        <button id="btnMap" title="Toggle map view (M)">Map · M</button>
+        <button id="btnHelpF" title="Controls and checklist (H)">Help · H</button>
+        <button id="btnMenu" title="Pause menu (Esc)">Menu · Esc</button>
+      </div>
+    </div>
+    <div id="telemetry" class="panel hud"></div>
+    <div id="stageStack" class="panel hud"></div>
+    <div id="messages"></div>
+    <div id="mapPanel" class="panel hud hidden"></div>
+    <div id="nodePanel" class="panel hud hidden"></div>
+    <div id="controls" class="panel hud">
+      <div class="ctl dial-wrap"><canvas id="dial" width="150" height="150"></canvas><small>attitude · ◯ prograde · ⊗ retrograde</small></div>
+      <div class="ctl throttle">
+        <div class="ctl-title">Throttle <b id="throttleLabel">100%</b></div>
+        <div class="thr-row">
+          <div class="thr-gauge"><i id="throttleFill"></i></div>
+          <input id="throttleSlider" type="range" min="0" max="100" value="100" orient="vertical" aria-label="Throttle">
+          <div class="thr-btns">
+            <button id="thrMax" title="Full throttle (Z)">MAX <small>Z</small></button>
+            <button id="thrUp" title="Throttle up (W / ↑, Shift = fine)">▲ <small>W</small></button>
+            <button id="thrDown" title="Throttle down (S / ↓, Shift = fine)">▼ <small>S</small></button>
+            <button id="thrCut" title="Cut throttle (X)">CUT <small>X</small></button>
+          </div>
+        </div>
+      </div>
+      <div class="ctl attitude">
+        <div class="ctl-title">Attitude</div>
+        <div class="rot-row">
+          <button id="rotL" title="Rotate left (A / ←)">⟲ <small>A</small></button>
+          <button id="rotR" title="Rotate right (D / →)">⟳ <small>D</small></button>
+        </div>
+        <div id="sasButtons">
+          <button data-mode="stability" title="Hold current attitude (T toggles)">STABILITY <small>T</small></button>
+          <button data-mode="off" title="Free rotation">SAS OFF</button>
+          <button data-mode="prograde" title="Point along velocity (P)">PROGRADE <small>P</small></button>
+          <button data-mode="retrograde" title="Point against velocity (R)">RETROGRADE <small>R</small></button>
+          <button data-mode="maneuver" class="wide" title="Point along the next maneuver burn (V)">MANEUVER <small>V</small></button>
+        </div>
+      </div>
+      <button id="btnStage" class="stage-btn" title="Activate next stage (Space)">STAGE<small>Space</small></button>
+    </div>
+    <div id="outcome" class="modal hidden"></div>
+    <div id="menu" class="modal hidden">
+      <div class="card">
+        <h2>Paused</h2>
+        <label class="volume-row">Sound volume <input id="volumeSlider" type="range" min="0" max="100" value="80" aria-label="Sound volume"><b id="volumeLabel">80%</b></label>
+        <div class="actions vertical">
+          <button data-act="resume" class="primary">Resume</button>
+          <button data-act="revert">Revert to launch</button>
+          <button data-act="hangar">Back to hangar</button>
+          <button data-act="help">Controls &amp; checklist</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== HELP ============================== -->
+  <div id="help" class="modal hidden">
+    <div class="card help-card scroll">
+      <button class="close" data-close aria-label="Close">✕</button>
+      <h2>Controls</h2>
+      <div class="keys">
+        <div><kbd>Space</kbd> Activate next stage</div>
+        <div><kbd>W</kbd>/<kbd>S</kbd> or <kbd>↑</kbd>/<kbd>↓</kbd> Throttle up / down (<kbd>Shift</kbd> = fine)</div>
+        <div><kbd>Z</kbd> Full throttle · <kbd>X</kbd> Cut throttle</div>
+        <div><kbd>A</kbd>/<kbd>D</kbd> or <kbd>←</kbd>/<kbd>→</kbd> Rotate left / right</div>
+        <div><kbd>T</kbd> Stability assist on/off · <kbd>P</kbd> Hold prograde · <kbd>R</kbd> Hold retrograde</div>
+        <div><kbd>V</kbd> Hold maneuver burn · <kbd>Del</kbd> Delete selected maneuver node</div>
+        <div><kbd>U</kbd> Sound on/off (volume in the <kbd>Esc</kbd> menu)</div>
+        <div><kbd>.</kbd> Faster warp · <kbd>,</kbd> Slower warp · <kbd>/</kbd> Real time</div>
+        <div><kbd>M</kbd> Map view · <kbd>Tab</kbd> Map focus · <kbd>N</kbd> Next target</div>
+        <div>Wheel or <kbd>+</kbd>/<kbd>−</kbd> Zoom · <kbd>H</kbd> This help · <kbd>Esc</kbd> Pause menu</div>
+      </div>
+      <p class="note">Time warp above 4× only works while coasting outside the atmosphere. It slows down by itself before
+        sphere-of-influence changes, atmospheric entry, the ground and the start of a planned maneuver burn.</p>
+
+      <h2>Maneuver nodes</h2>
+      <ul>
+        <li>In the map (<kbd>M</kbd>), <b>click your trajectory</b> to add a node there. Its dashed path shows the orbit after the burn,
+          with apoapsis, periapsis and moon encounters, computed with the same rules as flight.</li>
+        <li>Drag the green <b>prograde/retrograde</b> or cyan <b>radial</b> handles: the farther you pull, the faster Δv changes.
+          Or use the node panel's buttons (hold to repeat) and type exact values.</li>
+        <li>Drag the node itself along the path, or use the time buttons (±1 s … ± one orbit), to move it in time.</li>
+        <li>Click the planned (dashed) path to chain another node, e.g. plan the capture at the moon before leaving.</li>
+        <li>With a moon targeted, <b>Create transfer node</b> places a Hohmann burn at the next good moment.</li>
+        <li>To fly it: <b>Warp to burn</b> (warp stops 10 s before the burn starts), press <kbd>V</kbd> to hold the burn direction
+          (blue marker on the dial), and throttle up when “Start burn” says NOW. Remaining Δv counts down; cut the throttle
+          near zero and the node removes itself.</li>
+      </ul>
+
+      <h2>Flight checklist — Kestrel starter</h2>
+      <h3>1 · Reach orbit</h3>
+      <ol>
+        <li>In the hangar press <b>Launch ▲</b>. Throttle starts at 100%.</li>
+        <li>Press <kbd>Space</kbd>: the Hammer engine lights and you lift off.</li>
+        <li>At <b>500 m</b> altitude hold <kbd>D</kbd> until the attitude dial reads <b>25° R</b>, then let go. Stability assist holds the tilt.</li>
+        <li>When the green prograde marker on the dial swings up to the yellow needle (about 1.5 km), press <kbd>P</kbd>. The rocket now gravity-turns on its own.</li>
+        <li>Watch <b>APOAPSIS</b>. When it reaches <b>30 km</b> (about T+1:40, 11 km up), press <kbd>X</kbd>.</li>
+        <li>Above 15 km press <kbd>.</kbd> to warp toward apoapsis. Return to real time when the apoapsis timer shows ~15 s.</li>
+        <li>About <b>5–10 s before apoapsis</b> (still holding prograde) press <kbd>Z</kbd>. Cut with <kbd>X</kbd> as soon as <b>PERIAPSIS</b> passes <b>20 km</b>. You are in orbit (about 30 × 20 km). The booster keeps its leftover fuel for the next burn.</li>
+      </ol>
+      <h3>2 · Intercept the inner moon, Pock</h3>
+      <ol>
+        <li>Press <kbd>M</kbd> for the map and click <b>Pock</b> (or <kbd>N</kbd>) to target it.</li>
+        <li>The map panel shows the phase angle and “Transfer burn ≈ 170 m/s prograde in …”. Warp until that countdown is a few seconds.</li>
+        <li><kbd>P</kbd> then <kbd>Z</kbd>. Press <kbd>Space</kbd> when the booster runs dry (the Sparrow takes over).</li>
+        <li>When the trajectory shows <b>Encounter Pock</b>, slow the throttle (<kbd>S</kbd>) and keep burning until the orange Pock periapsis reads <b>3–9 km</b>. Then <kbd>X</kbd>.</li>
+        <li>Warp freely: it backs off automatically before the sphere-of-influence boundary.</li>
+      </ol>
+      <h3>3 · Enter lunar orbit and land</h3>
+      <ol>
+        <li>After “Entered Pock’s sphere of influence”, warp until the periapsis timer reads ~40 s.</li>
+        <li><kbd>R</kbd> (retrograde) and <kbd>Z</kbd>: burn until an apoapsis appears below ~15 km. Pock’s gravity reaches only ~21 km up. <kbd>X</kbd>.</li>
+        <li>To deorbit: <kbd>R</kbd>, <kbd>Z</kbd> until <b>PERIAPSIS</b> is below −3 km, then <kbd>X</kbd>.</li>
+        <li>Warp down (it slows near the ground). Keep retrograde hold. At about <b>500 m RADAR</b>, throttle up and keep the descent rate near RADAR ÷ 10.</li>
+        <li>Below ~50 m, once horizontal speed is under 1 m/s: <kbd>T</kbd> (stability), stand upright with <kbd>A</kbd>/<kbd>D</kbd> and settle down slowly.</li>
+        <li>Safe touchdown with legs: descent ≤ 6 m/s, horizontal ≤ 3 m/s, tilt ≤ 12°, ground slope ≤ 25° (the HUD's <b>GROUND</b> row shows slope).</li>
+      </ol>
+      <p class="note">Crashed? Press <b>Revert to launch</b> or <b>Back to hangar</b> on the result card, or open the <kbd>Esc</kbd> menu.</p>
+    </div>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/orbit.js"></script>
+<script src="js/system.js"></script>
+<script src="js/planets.js"></script>
+<script src="js/craft.js"></script>
+<script src="js/coast.js"></script>
+<script src="js/maneuver.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/render.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/hangar.js"></script>
+<script src="js/flightui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

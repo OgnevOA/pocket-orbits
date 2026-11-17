@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Orbits — core checks</title>
+<style>
+  body { font: 14px/1.45 ui-monospace, Menlo, Consolas, monospace; background: #0b1020; color: #d9e4f2; margin: 24px; }
+  h1 { font-size: 18px; }
+  .t { margin: 10px 0; padding: 8px 12px; border-left: 4px solid #555; background: #111a30; }
+  .pass { border-color: #4fdc8a; } .fail { border-color: #ff5d5d; }
+  .d { color: #9fb2cc; white-space: pre-wrap; margin-left: 12px; }
+  #summary { font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Pocket Orbits — automated simulation checks</h1>
+<div id="summary">Running…</div>
+<div id="out"></div>
+<script src="../js/config.js"></script>
+<script src="../js/orbit.js"></script>
+<script src="../js/system.js"></script>
+<script src="../js/craft.js"></script>
+<script src="../js/coast.js"></script>
+<script src="../js/maneuver.js"></script>
+<script src="../js/sim.js"></script>
+<script src="pilots.js"></script>
+<script>
+  // Run after first paint so the page shows "Running…" while the missions fly.
+  setTimeout(function () {
+    const s = document.createElement('script');
+    s.src = 'core-tests.js';
+    s.onload = function () {
+      const R = window.TEST_RESULTS.results;
+      const out = document.getElementById('out');
+      R.forEach(function (r) {
+        const div = document.createElement('div');
+        div.className = 't ' + (r.pass ? 'pass' : 'fail');
+        div.innerHTML = '<b>' + (r.pass ? 'PASS' : 'FAIL') + '</b> ' + r.name + ' <small>(' + r.ms + ' ms)</small>';
+        const dd = document.createElement('div');
+        dd.className = 'd';
+        dd.textContent = r.details.join('\n');
+        div.appendChild(dd);
+        out.appendChild(div);
+      });
+      const passed = R.filter(function (r) { return r.pass; }).length;
+      document.getElementById('summary').textContent = passed + ' / ' + R.length + ' checks passed';
+      window.TESTS_DONE = true;
+    };
+    document.body.appendChild(s);
+  }, 50);
+</script>
+</body>
+</html>
