@@ -499,7 +499,7 @@
         if (inMap) {
           $('npTimeV').textContent = n.t > now ? 'T−' + D(n.t - now) : 'passed';
           for (const inp of document.querySelectorAll('#nodePanel [data-input]')) {
-            if (document.activeElement !== inp) inp.value = (inp.dataset.input === 'pro' ? n.pro : n.rad).toFixed(1);
+            if (document.activeElement !== inp) { const v = inp.dataset.input === 'pro' ? n.pro : n.rad; inp.value = (Math.abs(v) < 0.05 ? 0 : v).toFixed(1); }
           }
         }
       }

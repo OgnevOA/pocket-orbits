@@ -1,165 +1,176 @@
 # Pocket Orbits
 
-A small 2D spaceflight sandbox that runs entirely in the browser. You assemble a rocket in the hangar, launch it, stage it into orbit, transfer to a moon and land. There are no dependencies and no build step.
+A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage it into orbit, plan a transfer with maneuver nodes, and land on a moon.
 
-**Play online:** <https://ognevoa.github.io/pocket-orbits/>
+**[▶ Play it in your browser](https://ognevoa.github.io/pocket-orbits/)**. There's no install and no build step, and it's plain HTML and JavaScript.
 
-## Run it
+![Planning a transfer to the inner moon: the dashed path is the orbit after the planned burn, ending in a predicted encounter with Pock](docs/screenshots/maneuver.png)
 
-- **Online:** <https://ognevoa.github.io/pocket-orbits/> (GitHub Pages, served straight from `main`).
-- **Locally:** open `index.html` in a current Chrome, Edge, Firefox or Safari. It works from `file://`.
-- **Or serve it:** `python3 -m http.server 8000` in this folder, then open <http://localhost:8000>.
+## Highlights
 
-Designs are saved in your browser's `localStorage`. The design you're working on is also autosaved, so a reload brings it back.
+- **Hangar.** Snap parts into a stack, rearrange the staging, and see wet mass, liftoff thrust-to-weight and Δv for every stage. Save designs in your browser.
+- **Orbital mechanics.**
+  - Inverse-square gravity, drag in a thin atmosphere, and three moons with their own spheres of influence (patched conics).
+  - The physics doesn't depend on frame rate.
+  - Coasting orbits are calculated exactly, so they never drift.
+- **Map and maneuver nodes.**
+  - The map predicts your path, with apoapsis, periapsis and moon encounters.
+  - Plan burns by dragging handles, and chain a transfer and a capture before you leave orbit.
+  - A burn-direction hold makes nodes easy to fly.
+- **Time warp** that slows itself before sphere-of-influence changes, the atmosphere, the ground and planned burns.
+- **Landings** judged on descent rate, drift, tilt and slope, with a clear landed or crashed result.
+- **Planets rendered on the GPU** from layered 3D noise and craters, lit by one sun with real day and night sides.
+- **Synthesised engine sound**: rumble, roar, crackle and turbopump whine, muffled in vacuum. There are no audio files.
 
-## Fly the starter rocket (Kestrel)
+## Screenshots
 
-The hangar opens with **Kestrel**, a ready-to-launch two-stage rocket. Its numbers are 2,910 kg wet, liftoff TWR 1.92, and Δv of 1,296 m/s (stage 1, vacuum) plus 1,573 m/s (stage 2). Press **Launch ▲**, then follow the checklist. The same checklist is in the game under **Help · H**.
+| | |
+| --- | --- |
+| ![Hangar with the starter rocket, its stats and staging](docs/screenshots/hangar.png) | ![Ignition on the launch pad](docs/screenshots/liftoff.png) |
+| **Hangar.** Build, stage, check Δv and TWR. | **Ignition.** The starter rocket on the pad. |
+| ![In orbit above the home planet Verdis](docs/screenshots/orbit.jpg) | ![In orbit around Pock, seen on the map](docs/screenshots/lunar-orbit.jpg) |
+| **Orbit.** Above Verdis, with clouds and a terminator. | **Lunar orbit.** Captured around cratered Pock. |
+| ![Landed on Pock, with the touchdown report](docs/screenshots/landed.png) | ![The planet and three moons rendered as textured spheres](docs/screenshots/planets.jpg) |
+| **Touchdown.** Every landing is graded. | **The worlds.** Verdis, Pock, Ferro and Rime. |
+
+## Play
+
+- **Online:** <https://ognevoa.github.io/pocket-orbits/>
+- **Locally:** open `index.html` in a current Chrome, Edge, Firefox or Safari. It works straight from disk. Or run `python3 -m http.server 8000` in this folder and open <http://localhost:8000>.
+
+Designs and settings are stored in your browser's `localStorage`. Press **H** in flight for the controls and a checklist.
+
+## Your first mission
+
+The hangar opens with **Kestrel**, a ready-to-fly two-stage rocket: 2,910 kg, liftoff TWR 1.92, and 1,296 + 1,573 m/s of Δv. Press **Launch ▲**.
 
 ### 1 · Reach orbit
-1. Throttle starts at 100%. Press **Space** to ignite stage 1 (Hammer) and lift off.
-2. At **500 m** hold **D** until the attitude dial shows **25° R**, then release. Stability assist holds the tilt.
-3. When the green prograde marker on the dial reaches the yellow needle (about 1.5 km), press **P** for prograde hold. The rocket now gravity-turns on its own.
-4. When **APOAPSIS** reads **30 km** (about T+1:40 at 11 km altitude), press **X**.
-5. Above 15 km press **.** to warp toward apoapsis. Drop back to real time when the apoapsis timer shows about 15 s.
-6. About **5–10 s before apoapsis**, still holding prograde, press **Z**. Press **X** when **PERIAPSIS** passes **20 km**. You are now in an orbit of about 29.5 × 20 km, with about 100 kg of booster fuel left for the next burn.
+1. The throttle starts at 100%. Press **Space** to light the first stage.
+2. At **500 m**, hold **D** until the attitude dial reads **25° R**, then let go.
+3. When the green prograde marker on the dial reaches the yellow needle (about 1.5 km up), press **P** to hold prograde. The rocket now turns toward the horizon by itself.
+4. When **APOAPSIS** reaches **30 km**, press **X**.
+5. Above 15 km, press **.** to warp toward apoapsis, and return to real time about 15 s before it.
+6. About **5–10 s before apoapsis**, press **Z**. Press **X** once **PERIAPSIS** passes **20 km**.
 
-### 2 · Intercept the inner moon (Pock)
-1. Press **M** for the map and click **Pock** (or press **N**).
-2. The map panel shows the phase angle and *"Transfer burn ≈ 170 m/s prograde in …"*. Warp until that countdown is a few seconds away.
-3. Press **P**, then **Z**. Press **Space** when the booster runs dry and the Sparrow takes over.
-4. When the map shows **Encounter Pock**, throttle down (**S**) and keep burning until the orange Pock periapsis reads **3–9 km**. Then press **X**.
-5. Warp freely. Warp slows down by itself before the sphere-of-influence (SOI) boundary.
+You're now in an orbit of about 30 × 20 km, with a little booster fuel left.
 
-**With maneuver nodes instead:** in step 2, press **Create transfer node** in the map panel. Click the node panel's **+.1** until it shows *Pock encounter Pe 3–9 km*. Then click **Warp to burn**, press **V**, and press **Z** when *Start burn* says **NOW**. Ease off with **S** for the last few m/s and press **X** near 0. You can also add the capture burn before leaving: click the dashed path at Pock's periapsis and drag the retrograde handle until the panel shows a closed orbit.
+### 2 · Fly to the inner moon, Pock
+1. Press **M** for the map and click **Pock** to target it.
+2. Click **Create transfer node**. The node panel shows the burn, how long it takes, and where it leads.
+3. Click **+.1** under Prograde until the panel shows **Pock encounter Pe 3–9 km**.
+4. Click **Warp to burn**, then press **V** to hold the burn direction.
+5. When **Start burn** says **NOW**, press **Z**. Press **Space** when the booster runs dry.
+6. Ease off with **S** for the last few m/s, and press **X** near zero. The node clears itself.
+7. Warp toward the encounter. Warp backs off before Pock's sphere of influence.
 
-### 3 · Lunar orbit and landing
-1. After *"Entered Pock's sphere of influence"*, warp until the periapsis timer reads about 40 s.
-2. Press **R** (retrograde hold) and **Z**. Burn until an apoapsis below about 15 km appears, then press **X**. Pock's SOI reaches only about 21.7 km above its surface.
-3. To deorbit, press **R** and **Z** until **PERIAPSIS** is below −3 km, then press **X**.
-4. Warp down (it slows near the ground) and keep retrograde hold. From about **500 m RADAR**, use the throttle to keep the descent rate near RADAR ÷ 10.
-5. Below about 50 m, with horizontal speed under 1 m/s, press **T** (stability) and stand upright with **A**/**D**.
-6. A safe touchdown with legs needs descent ≤ 6 m/s, horizontal speed ≤ 3 m/s, tilt ≤ 12° and ground slope ≤ 25°. The HUD's **GROUND** row shows the slope.
+Prefer to fly it by hand? The map panel also shows the phase angle and "transfer burn ≈ 170 m/s prograde in …". Burn prograde then, and stop when the map shows the encounter.
+
+### 3 · Capture and land
+1. Inside Pock's sphere of influence, warp until periapsis is about 40 s away.
+2. Press **R** (hold retrograde) and **Z**. Burn until an apoapsis below 15 km appears, then press **X**. Pock's gravity only reaches about 21.7 km above its surface.
+3. To deorbit, burn retrograde until **PERIAPSIS** is below −3 km.
+4. Fall with retrograde held. From about **500 m RADAR**, throttle to keep the descent rate near RADAR ÷ 10.
+5. Below about 50 m, once sideways speed is under 1 m/s, press **T** and stand upright with **A**/**D**.
+6. A safe landing with legs needs descent ≤ 6 m/s, sideways speed ≤ 3 m/s, tilt ≤ 12° and ground slope ≤ 25°.
 
 ## Controls
 
 | Key | Action | Key | Action |
 | --- | --- | --- | --- |
 | Space | Next stage | M | Map view |
-| W / S, ↑ / ↓ | Throttle up / down (Shift = fine) | Tab | Map focus |
+| W / S, ↑ / ↓ | Throttle up / down (Shift = fine) | Tab | Cycle map focus |
 | Z / X | Full throttle / cut throttle | N | Next target moon |
 | A / D, ← / → | Rotate left / right | Wheel, + / − | Zoom |
 | T | Stability assist on / off | . / , | Warp faster / slower |
-| P / R | Hold prograde / retrograde | / | Back to real time |
+| P / R | Hold prograde / retrograde | / | Real time |
 | V | Hold the maneuver burn direction | Del | Delete the selected maneuver node |
-| U | Sound on / off (volume in the Esc menu) | | |
-| H | Help and checklist | Esc | Pause menu (revert, hangar) |
+| U | Sound on / off | H | Help and checklist |
+| Esc | Pause menu (volume, revert, hangar) | | |
 
-Every control also has an on-screen button. Control stays with the same craft in both the flight view and the map.
+Every control also has an on-screen button.
 
-## Maneuver nodes
+**On the map:**
+- Click your path to add a maneuver node. Drag the node to move it in time, or drag its green or cyan handles to shape the burn.
+- Click a moon to target it, double-click to focus it, and drag to pan.
 
-Plan burns in advance on the map (**M**):
+## The worlds
 
-- **Add:** click your trajectory; hovering shows where the node will go. The dashed path is the orbit after the burn, with apoapsis, periapsis, moon encounters and impacts. It's computed with the same gravity, SOI and terrain rules as flight.
-- **Shape the burn:** drag the green prograde/retrograde or cyan radial handles. The farther you pull, the faster the Δv changes. Or use the node panel's −10…+10 buttons (hold to repeat) or type exact values.
-- **Move in time:** drag the node along its path, or use −orb, −1m … +1m, +orb.
-- **Chain nodes:** click the dashed planned path to add another node, e.g. the capture burn at the moon. Each node's panel shows what it leads to.
-- **Transfer helper:** with a moon targeted in a near-circular orbit, **Create transfer node** places a Hohmann burn at the next good moment.
-- **Fly it:**
-  - **Warp to burn**: warp stops 10 s before the burn should start.
-  - **V** holds the burn direction (blue marker on the attitude dial).
-  - Throttle up when *Start burn* says **NOW**.
-  - The next node keeps its planned orbit fixed, so its Δv counts down as you burn. Cut the throttle near zero and the node removes itself.
-- Burns take time, while nodes are instant, so real results land close to the plan but not exactly on it. A moon encounter is sensitive, so check the map afterwards and add a small correction node if needed.
-
-## Rules of the sandbox
-
-- **Hangar.** Drag parts onto the stack; a highlighted line shows where they snap. Drag a part off the stack to remove it, or select it and use Up, Down and Remove (also Alt+↑/↓ and Delete). The staging panel lists, for each step, which engines **IGNITE** and which decouplers **DECOUPLE**. Use ▲/▼ to move an item to an earlier or later step, ↑/↓ to reorder whole steps, and **Auto** to restore the default order.
-- **Fuel flow.** An engine burns only from tanks in its own section, meaning between its nearest decouplers. When a decoupler fires, everything on the side away from the command pod is dropped, decoupler included.
-- **Physics.**
-  - Inverse-square gravity from the body whose sphere of influence you're in (patched conics). Moons follow circular orbits.
-  - Exponential atmospheric drag below 15 km on Verdis. Thrust points along the rocket's axis, and Isp blends between sea-level and vacuum values with air pressure.
-  - Powered or atmospheric flight is integrated with fixed 0.02 s RK4 steps, independent of frame rate.
-  - Coasting is propagated analytically (universal-variable Kepler). Orbits therefore don't drift, and high warp is cheap.
-- **Prediction and flight share one integrator.** The map's trajectory is computed by the same coasting code the flight uses, with the same SOI, atmosphere and terrain events. SOI changes keep the global position and velocity exactly.
-- **Time warp.** Up to 4× works any time (physics warp). Above that, warp runs "on rails" and only while coasting outside the atmosphere. Warp steps itself down before SOI changes, atmospheric entry, terrain impact and the start of the next maneuver burn.
-- **Touchdown.** Judged on surface-relative descent rate, horizontal speed, tilt (against local vertical or the ground normal) and ground slope. Legs on the bottom stage raise the limits (6 m/s / 3 m/s / 12° with legs, 2.5 m/s / 1.5 m/s / 8° without).
-- **Simplifications.** The world is a single 2D plane, the planet does not rotate, and there is no reentry heating or parachutes.
-
-## Sound
-
-Engine sound is synthesised live with the Web Audio API; there are no audio files.
-
-- **The engine voice** mixes a deep rumble, the exhaust roar, a hiss, a low combustion throb, crackle pops and a turbopump whine.
-- **What shapes it:** the throttle, which engines are firing, and the air pressure. Each engine has its own `sound` profile in `js/config.js` (size, crackle, whine). Big boosters are deeper, louder and crackle in air. Small vacuum engines are brighter, with a whine that rises with throttle.
-- **In vacuum** the sound turns into a muffled, structure-borne rumble with the whine on top.
-- **Events:** ignition gives a thump and a whoosh, including when staging lights a new engine. Running out of fuel coughs and sputters out. Cutting the throttle fades the engine quickly.
-- **Mixing:** quieter in map view, silent while paused or in the hangar, and suspended when the tab is hidden.
-- **Controls:** **U** mutes. The volume slider is in the **Esc** menu, and both settings are remembered.
-
-Browsers only start audio after you click or press a key; any input in the game does that.
-
-`tests/audio.html` is a sound lab: listen to each engine at sea level and in vacuum, play a scripted launch sequence, or drive the voice live. It also renders the voice offline and checks loudness, brightness, the whine, the ignition transient, flameout and clipping.
-
-## Planet and moon textures
-
-Planets and moons in the map and in distant views are textured spheres, rendered per pixel on the GPU (WebGL2):
-
-- **Projection.** The map looks down on the orbital plane, so each body is seen from above its pole. The disc rim is the equator, which is exactly the terrain outline the flight physics uses.
-- **Noise.** Every pixel is placed on the sphere and coloured from several layers of 3D Perlin noise sampled at that point, so there are no seams or pinched poles. Layers are band-limited to the on-screen size, so they stay sharp without shimmering at any zoom.
-- **Craters and relief.** Crater and ridge height fields bump the surface normals. Pock's equatorial craters are the same ones that cut its terrain outline. Extra craters at three finer scales fade in as you zoom.
-- **Each body:**
-  - *Verdis:* continents and seas, forests, deserts and mountains, a small polar cap, drifting clouds, ocean glint and atmospheric haze.
-  - *Pock:* grey regolith, dark maria, dense craters and a few young rayed craters.
-  - *Ferro:* rust-red terraced ridges with dust lowlands.
-  - *Rime:* bright ice crossed by long stained cracks.
-- **Sunlight.** One sun lights everything from a fixed direction, so bodies have a day and a night side. The close-up ground and the sky follow the same day/night cycle.
-- **Fallback.** Without WebGL2, the game falls back to flat 2D discs.
-
-`tests/planets.html` shows all four bodies plus two close-ups. Add `?fallback=1` to see the 2D version.
-
-## Configuration
-
-Everything tunable lives in **`js/config.js`**: the planet (radius, gravity, atmosphere, launch site), the three moons (radius, gravity, orbit radius, start angle, terrain style, palette), the part catalogue, presets, warp levels and landing limits. Each body also has a `texture` entry (colours, bump strength, number of extra craters, seed), and `sunDirection` sets where the light comes from.
-
-| Body | Radius | g | Orbit | SOI | Look |
+| Body | Radius | Gravity | Orbit | Sphere of influence | Look |
 | --- | --- | --- | --- | --- | --- |
-| Verdis (home) | 120 km | 4.0 m/s² | — | — | green hills and mountains, blue atmosphere |
-| Pock | 12 km | 0.3 m/s² | 600 km | 33.7 km | grey, cratered outline |
-| Ferro | 22 km | 0.5 m/s² | 1,300 km | 145.7 km | rust-red stepped mesas and cliffs |
-| Rime | 35 km | 0.7 m/s² | 2,500 km | 464.6 km | pale ice plains with sharp spires |
+| Verdis (home) | 120 km | 4.0 m/s² | — | — | continents, seas and clouds; atmosphere up to 15 km |
+| Pock | 12 km | 0.3 m/s² | 600 km | 33.7 km | grey, densely cratered, dark maria |
+| Ferro | 22 km | 0.5 m/s² | 1,300 km | 145.7 km | rust-red terraced ridges and mesas |
+| Rime | 35 km | 0.7 m/s² | 2,500 km | 464.6 km | bright ice with long cracks and sharp spires |
+
+A circular orbit 25 km above Verdis takes about 630 m/s. The moons orbit clockwise on the map, the same way you fly after tilting right at launch.
+
+## How it works
+
+**Flight physics.**
+- Gravity comes only from the body whose sphere of influence you're in (patched conics). The moons follow circular orbits.
+- Powered flight and flight in the atmosphere use fixed 0.02 s RK4 steps, so results don't depend on frame rate.
+- Thrust points along the rocket, and Isp blends between its sea-level and vacuum values with air pressure.
+- An engine only burns fuel from its own section of the stack, between decouplers.
+- Coasting is solved exactly (universal-variable Kepler propagation), which makes high time warp cheap and orbits stable.
+
+**Prediction uses the same code as flight.** The map's path is computed by the same coasting code, with the same sphere-of-influence, atmosphere and terrain events, and its step sizes come from strict speed bounds, so no crossing can be skipped. That also drives time warp: it steps itself down before any predicted event or planned burn. Switching frames at a sphere-of-influence boundary keeps position and velocity exactly.
+
+**Maneuver nodes** store a time plus prograde and radial Δv. The path after each node is predicted with the same rules. While you burn, the next node keeps its planned orbit fixed, so its remaining Δv counts down. Real burns take time while nodes are instant, so a sensitive moon encounter may need a small correction afterwards.
+
+**Landing** is judged on descent rate and sideways speed relative to the surface, tilt (against local vertical or the ground) and ground slope. Landing legs on the bottom stage raise the limits.
+
+**Planets** are rendered per pixel in a WebGL2 shader.
+- *Projection:* the map looks down on the orbital plane, so each body is a sphere seen from above its pole, and its rim is exactly the terrain outline you land on.
+- *Surface:* colour and relief come from layered 3D Perlin noise sampled on the sphere, plus crater and ridge height fields. Detail is limited to what the screen can show, so it stays sharp at any zoom, and smaller craters appear as you zoom in.
+- *Light and fallback:* a single sun lights everything, and the close-up ground and sky follow the same day and night. Without WebGL2 the game draws flat discs instead.
+
+**Sound** is synthesised with the Web Audio API.
+- One engine voice mixes rumble, roar, hiss, a combustion throb, crackle and a turbopump whine.
+- Throttle, the firing engines' sound profiles and air pressure shape it. In vacuum, only a muffled rumble remains.
+- Ignition, flameout and staging have their own sounds.
+
+**Simplifications:** the world is a single 2D plane, the home planet doesn't rotate, and there's no reentry heating or parachutes.
+
+## Make it yours
+
+Everything tunable lives in [`js/config.js`](js/config.js):
+- the planet, the moons and the launch site;
+- the part catalogue and the preset rockets;
+- the warp levels and landing limits;
+- each body's texture colours and crater counts, and the sun direction;
+- each engine's sound profile and the audio levels.
 
 ## Project layout
 
 ```
-index.html          page layout, help / checklist
+index.html          page layout, help and checklist
 css/style.css       styles
 js/config.js        the editable configuration
 js/orbit.js         Kepler propagation, orbital elements
-js/system.js        bodies, ephemerides, SOIs, atmosphere, terrain generation
-js/planets.js       GPU sphere textures (layered noise, craters, lighting)
+js/system.js        bodies, moon orbits, spheres of influence, atmosphere, terrain
 js/craft.js         designs, staging, fuel sections, Δv/TWR analysis
-js/coast.js         shared coasting + event detection, trajectory prediction
-js/maneuver.js      maneuver nodes: planned burns, chained predictions, burn estimates
+js/coast.js         shared coasting with event detection, trajectory prediction
+js/maneuver.js      maneuver nodes, chained predictions, burn estimates
 js/sim.js           flight simulation, warp limiter, touchdown evaluation
+js/planets.js       GPU sphere textures (noise, craters, lighting)
 js/render.js        part painter, flight view, map, attitude dial
-js/audio.js         synthesised engine sound (Web Audio)
+js/audio.js         synthesised engine sound
 js/hangar.js        hangar UI and saved designs
-js/flightui.js      flight HUD and controls
+js/flightui.js      flight HUD, controls, maneuver panel
 js/main.js          app shell and game loop
-tests/              automated checks (see below)
+tests/              automated checks and labs
+docs/screenshots/   README images
 ```
 
-## Automated checks
+## Tests and labs
 
-- **In a browser:** open `tests/index.html`. It runs the simulation checks, including a scripted flight from the pad to the surface of Pock, and lists PASS/FAIL with details.
-- **Headless:** `python3 tests/run_browser_tests.py all --shots shots/` runs the simulation checks and the UI checks in headless Chrome over the DevTools protocol. The UI checks cover building, saving, reloading and reopening a design, editing the staging, keyboard flight, the map, the crash card, revert, the planet textures (GPU and 2D fallback), and engine sound (offline waveform analysis plus the game driving it with real input). They also drive maneuver nodes with real mouse and keyboard input (add, edit, drag, chain, delete, then fly a transfer node live) and run the full mission inside the real game page. It needs Python 3.9+ with `websockets` and Chrome or Chromium (Flatpak Chrome works; set `CHROME=/path/to/chrome` to choose one).
+- [`tests/index.html`](https://ognevoa.github.io/pocket-orbits/tests/) runs the simulation checks in your browser. One of them flies the starter rocket from the pad to the surface of Pock.
+- [`tests/planets.html`](https://ognevoa.github.io/pocket-orbits/tests/planets.html) shows every world plus close-ups. Add `?fallback=1` for the 2D version.
+- [`tests/audio.html`](https://ognevoa.github.io/pocket-orbits/tests/audio.html) is a sound lab: hear each engine, play a launch sequence, and see the offline waveform checks.
+- `python3 tests/run_browser_tests.py all` runs everything in headless Chrome. That includes UI checks driven by real mouse and keyboard input: building and saving designs, flying with the keyboard, maneuver nodes, textures, sound, and a full mission inside the game page. It needs Python 3.9+ with `websockets` and Chrome or Chromium (set `CHROME=/path/to/chrome` to pick one).
 
-The scripted pilots in `tests/pilots.js` only use player controls: throttle, rotation, SAS holds, staging and warp.
-
-Developer shortcuts in the browser console: `APP.debugScenario('orbit' | 'transfer' | 'landed' | 'crash')` and `APP.debugScenario('surface', 'ferro')`.
+The scripted pilots in `tests/pilots.js` fly only with player controls: throttle, rotation, the attitude holds, staging and warp.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

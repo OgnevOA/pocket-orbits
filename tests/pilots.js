@@ -208,8 +208,10 @@
           // fly the descent rate down to a target that shrinks with height
           const target = -Math.max(1.5, Math.min(40, h * 0.12));
           const err = target - vs;
-          const thr = (g + 1.5 * err) / Math.max(0.1, aMax);
-          f.setThrottle(Math.min(1, Math.max(0, thr)) + (Math.abs(hs) > 2 ? 0.05 : 0));
+          let thr = (g + 1.5 * err) / Math.max(0.1, aMax);
+          // keep burning retrograde until the sideways drift is gone, not just the descent
+          if (Math.abs(hs) > 0.5) thr = Math.max(thr, Math.min(1, Math.abs(hs) / Math.max(0.1, aMax * 1.5)));
+          f.setThrottle(Math.min(1, Math.max(0, thr)));
           if (Math.abs(hs) < 0.6 && h < 60) { phase = 'final'; note('Horizontal speed killed: stability hold, stand upright'); }
           break;
         }
