@@ -102,6 +102,20 @@
     landing: {
       withLegs: { maxDescent: 6, maxHorizontal: 3, maxTiltDeg: 12 },
       withoutLegs: { maxDescent: 2.5, maxHorizontal: 1.5, maxTiltDeg: 8 },
+      maxSlopeDeg: 25, // steeper ground is a crash either way
+    },
+
+    // Cautions (amber, a chime) and warnings (red, flashing screen edges, beeps) in flight.
+    alerts: {
+      lowFuel: 0.1, // stage fuel fraction for "Low fuel" while the engines fire
+      groundRange: 5000, // landing alerts start below this radar altitude (m)
+      // Sink rate: distance needed to brake to a safe touchdown speed at full thrust,
+      // as a fraction of the height left. Above these it is a caution / a warning.
+      sinkCaution: 0.6,
+      sinkWarning: 0.9,
+      driftRange: 150, // sideways speed over the touchdown limit is called out below this height (m)
+      tiltRange: 40, // tilt over the touchdown limit is called out below this height (m)
+      slopeRange: 300, // ground steeper than maxSlopeDeg is called out below this height (m)
     },
 
     // Part catalogue. Heights/widths in metres. Engines: thrust in N (vacuum), Isp in s.
@@ -153,7 +167,8 @@
       legs: {
         category: 'structural', role: 'legs', name: 'Landing Leg Ring', mass: 50, height: 0.4, width: 1.25,
         footSpread: 1.0, footDrop: 0.35,
-        description: 'Legs reach below the bottom of their own stage. Needed for safe landings.',
+        deployTime: 1.2, // seconds for the legs to swing down (cosmetic)
+        description: 'Legs reach below the bottom of their own stage. Needed for safe landings. They stay folded until their stage fires.',
       },
     },
 
@@ -176,6 +191,7 @@
       masterVolume: 0.8,
       mapViewLevel: 0.55, // engines are quieter while looking at the map
       vacuumLevel: 0.4, // in vacuum only the muffled structure-borne rumble remains
+      alertLevel: 0.4, // caution chime and warning beeps
     },
 
     // Paint. Every part has a main colour, an accent colour and (pods and tanks) a pattern.

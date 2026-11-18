@@ -359,6 +359,7 @@ async def run_ui(cdp, base, shots):
     _ = land, crash
 
     await run_maneuver_ui(cdp, shots, report)
+    await run_alerts_ui(cdp, shots, report)
     await run_planet_textures(base, cdp, shots, report)
     await run_audio(base, cdp, shots, report)
 
@@ -561,11 +562,13 @@ async def run_maneuver_ui(cdp, shots, report):
     await cdp.mouse("mouseMoved", pt["x"], pt["y"])
     await asyncio.sleep(0.3)
     hover = await cdp.eval("!!APP.mapView.hover")
+    tip = await cdp.eval("(APP.mapView.labelInfo.placed.find(p => p.text.startsWith('Alt ')) || {text: ''}).text")
     await cdp.click(pt["x"], pt["y"])
     await asyncio.sleep(0.4)
     n1 = json.loads(await cdp.eval("JSON.stringify({count: APP.flight.planner.count, dt: APP.flight.planner.count ? APP.flight.planner.nodes[0].t - APP.flight.st.t : null})"))
-    report("Maneuver: hovering the path offers a node; clicking adds it there", hover and n1["count"] == 1 and abs(n1["dt"] - pt["dt"]) < 30,
-           f"hover={hover} node={n1} clicked ~{pt['dt']:.0f} s ahead")
+    report("Maneuver: hovering the path shows the altitude and time there; clicking adds a node there",
+           hover and tip.startswith("Alt 25.0 km · ") and n1["count"] == 1 and abs(n1["dt"] - pt["dt"]) < 30,
+           f"hover={hover} label '{tip}' node={n1} clicked ~{pt['dt']:.0f} s ahead")
 
     for _ in range(15):
         await cdp.click_el('#nodePanel [data-comp="pro"] [data-dv="10"]')
@@ -679,6 +682,92 @@ async def run_maneuver_ui(cdp, shots, report):
     report("Maneuver: fly it with Warp to burn, V, Z, X: node clears and the real trajectory meets Pock",
            warp_at <= 2 and fin["nodes"] == 0 and fin["encounter"],
            f"warp near burn start {warp_at}x; Δv left at cut {left:.2f} m/s; {json.dumps(fin)}")
+    return True
+
+
+async def run_alerts_ui(cdp, shots, report):
+    """Cautions and warnings as the player meets them, and the decluttered map view."""
+    await cdp.eval("new Promise(r => { if (window.Pilots) return r(true); const s = document.createElement('script'); s.src = 'tests/pilots.js'; s.onload = () => r(true); document.body.appendChild(s); })")
+    audio = "JSON.stringify(SB.Audio.debug())"
+
+    # 1. The booster runs dry mid-burn in orbit, with the upper stage still waiting.
+    await cdp.eval("""(() => { APP.toHangar(); document.querySelector('#btnStarter').click(); document.querySelector('#btnLaunch').click();
+        const f = APP.flight, P = APP.sys.planet, r = P.radius + 25000;
+        f.stage(); f.situation = 'flying'; f.st.body = P; f.st.rx = 0; f.st.ry = r; f.st.vx = Math.sqrt(P.mu / r); f.st.vy = 0;
+        f.heading = 0; f.setThrottle(1); f.messages = [];
+        const sec = f.craft.sections().find(s => s.engines.some(e => f.craft.active.has(e.uid)));
+        for (const t of sec.tanks) t.fuel = t.fuelMax * 0.004;  // about half a second of burn left
+        APP.setView('flight'); return true; })()""")
+    s0 = json.loads(await cdp.eval(audio))
+    await asyncio.sleep(1.2)
+    state = """JSON.stringify({alerts: [...document.querySelectorAll('#alerts .alert')].map(e => e.className.replace('alert ', '') + ': ' + e.textContent),
+        ready: document.querySelector('#btnStage').classList.contains('ready'), vignette: document.querySelector('#vignette').classList.contains('on'),
+        msgs: APP.flight.messages.map(m => m.text),
+        rows: Object.fromEntries([...document.querySelectorAll('#telemetry .t-row')].map(e => [e.querySelector('span').textContent, e.className.replace('t-row', '').trim() + ' | ' + e.querySelector('b').textContent])),
+        audio: SB.Audio.debug()})"""
+    dry = json.loads(await cdp.eval(state))
+    fuel_row = dry["rows"].get("STAGE FUEL", "")
+    report("Alerts: a stage running dry gets a caution strip, a message, a pulsing STAGE button, EMPTY on the HUD and a chime",
+           any(a.startswith("caution") and "press Space" in a for a in dry["alerts"]) and dry["ready"] and not dry["vignette"]
+           and any(m.startswith("Out of fuel") for m in dry["msgs"]) and "EMPTY" in fuel_row and dry["audio"]["chimes"] > s0["chimes"],
+           f"strips {dry['alerts']}; STAGE pulsing {dry['ready']}; messages {dry['msgs']}; fuel row '{fuel_row}'; "
+           f"chimes {s0['chimes']} -> {dry['audio']['chimes']} (audio {dry['audio']['state']})")
+    if shots:
+        await cdp.shot(os.path.join(shots, "alert-stage-empty.png"))
+    await cdp.key("Space")
+    await asyncio.sleep(0.5)
+    staged = json.loads(await cdp.eval(state))
+    report("Alerts: pressing Space stages; the caution and the pulse clear", not staged["alerts"] and not staged["ready"],
+           f"strips {staged['alerts']}; STAGE pulsing {staged['ready']}")
+
+    # 2. Falling at Pock too fast to stop in time: red strip, flashing edges, beeps, V.SPD flagged.
+    await cdp.eval("""(() => { APP.debugScenario('landed'); const f = APP.flight; f.outcome = null; f.messages = [];
+        const c = f.craft, accel = c.thrustState(1, 0).thrust / c.mass() - f.localGravity();
+        const L = f.landingLimits().maxDescent, v = 40, h = (v * v - L * L) / (2 * accel) / 1.3;
+        const n = Math.hypot(f.st.rx, f.st.ry), u = [f.st.rx / n, f.st.ry / n];
+        f.st.rx += u[0] * h; f.st.ry += u[1] * h; f.st.vx = -u[0] * v; f.st.vy = -u[1] * v;
+        f.situation = 'flying'; f.setThrottle(0); f.setSas('stability', true);
+        APP.setView('flight'); APP.flightView.zoom = 2.5; return true; })()""")
+    s1 = json.loads(await cdp.eval(audio))
+    await asyncio.sleep(1.0)
+    sink = json.loads(await cdp.eval(state))
+    vspd = sink["rows"].get("V.SPD", "")
+    if shots:
+        await cdp.shot(os.path.join(shots, "alert-sink-rate.png"))
+    report("Alerts: falling too fast near the ground flashes the screen edges, beeps and flags V.SPD",
+           any(a.startswith("warning") and "sink rate" in a.lower() for a in sink["alerts"]) and sink["vignette"]
+           and vspd.startswith("bad") and sink["audio"]["beeps"] >= s1["beeps"] + 1,
+           f"strips {sink['alerts']}; edges flashing {sink['vignette']}; V.SPD '{vspd}'; beeps {s1['beeps']} -> {sink['audio']['beeps']}")
+    await cdp.eval("""(() => { const f = APP.flight, n = Math.hypot(f.st.rx, f.st.ry); f.st.vx = -f.st.rx / n * 2; f.st.vy = -f.st.ry / n * 2; return true; })()""")
+    await asyncio.sleep(0.4)
+    calm = json.loads(await cdp.eval(state))
+    report("Alerts: back to a gentle descent, the warning clears", not calm["alerts"] and not calm["vignette"],
+           f"strips {calm['alerts']}; edges flashing {calm['vignette']}")
+    await cdp.eval("APP.flight.paused = true; true")
+
+    # 3. Map view: a slim control deck, and labels that keep clear of each other, the markers and the panels.
+    await cdp.eval("APP.debugScenario('orbit'); APP.setView('flight'); true")
+    await asyncio.sleep(0.4)
+    deck_flight = await cdp.eval("document.querySelector('#controls').getBoundingClientRect().height")
+    await cdp.eval("""(() => { const f = APP.flight, pock = APP.sys.byId('pock'); f.setTarget(pock);
+        Pilots.addTransferNode(f, pock); f.maybePredict(true); f.planner.compute();
+        APP.setView('map'); APP.mapView.fitOrbit(); return true; })()""")
+    await asyncio.sleep(0.9)
+    lab = json.loads(await cdp.eval("""(() => { const mv = APP.mapView, info = mv.labelInfo;
+        const ov = (a, b) => a[0] < b[0] + b[2] && a[0] + a[2] > b[0] && a[1] < b[1] + b[3] && a[1] + a[3] > b[1];
+        const P = info.placed, clash = [], hit = [];
+        for (let i = 0; i < P.length; i++) {
+          for (let j = i + 1; j < P.length; j++) if (ov(P[i].r, P[j].r)) clash.push(P[i].text + ' / ' + P[j].text);
+          if (info.obstacles.some(o => ov(P[i].r, o))) hit.push(P[i].text);
+        }
+        return JSON.stringify({deck: document.querySelector('#controls').getBoundingClientRect().height, dial: document.querySelector('#dial').getBoundingClientRect().width, placed: P.map(p => p.text),
+          requested: info.requested, forced: P.filter(p => p.forced).length, clash, hit, panels: mv.hudRects().length}); })()"""))
+    if shots:
+        await cdp.shot(os.path.join(shots, "map-labels.png"))
+    report("Map view: slimmer control deck with the attitude dial; no label overlaps another label, a marker or a HUD panel",
+           lab["deck"] < deck_flight - 20 and lab["dial"] >= 140 and not lab["clash"] and not lab["hit"] and lab["forced"] == 0 and len(lab["placed"]) >= 5,
+           f"deck height {deck_flight:.0f} px in flight, {lab['deck']:.0f} px on the map, dial {lab['dial']:.0f} px; {len(lab['placed'])}/{lab['requested']} labels placed "
+           f"around {lab['panels']} panels, {lab['forced']} forced; overlaps {lab['clash']} {lab['hit']}\n       labels: {lab['placed']}")
     return True
 
 

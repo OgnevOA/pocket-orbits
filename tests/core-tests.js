@@ -252,6 +252,43 @@
   });
 
   // ---------------------------------------------------------------- mission: Pock
+  check('Landing legs: folded until their stage fires, open on the stand, cosmetic only', (d) => {
+    const legsOf = (f) => f.craft.parts.filter((p) => p.role === 'legs').map((p) => `${p.legsOut ? 'out' : 'folded'} ${p.deploy.toFixed(2)}`).join(', ');
+    // Kestrel: legs on the upper stage stay folded through the booster burn, open with stage 2
+    const f = new SB.Flight(sys, starter);
+    const geomBefore = JSON.stringify([f.geometry().bottomOffset, f.geometry().footHalfWidth]);
+    const pad = legsOf(f);
+    f.stage();
+    const s1 = legsOf(f);
+    f.situation = 'flying';
+    f.st.rx += Math.cos(planet.launchAngle) * 3000; f.st.ry += Math.sin(planet.launchAngle) * 3000;
+    f.stage();
+    const msg = f.messages[f.messages.length - 1].text;
+    const s2 = legsOf(f);
+    f.update(0.6);
+    const mid = legsOf(f);
+    for (let i = 0; i < 12; i++) f.update(0.1);
+    const end = legsOf(f);
+    d(`Kestrel: on the pad ${pad}; after stage 1 ${s1}; after stage 2 ${s2} ("${msg}"); 0.1 s later ${mid}; 1.3 s later ${end}`);
+    // a lander that stands on its legs, and a two-stage craft with legs on both stages
+    const lander = new SB.Flight(sys, SB.Craft.makeDesign('Lander', ['pod_lark', 'tank_s', 'legs', 'eng_sparrow']));
+    const both = new SB.Flight(sys, SB.Craft.makeDesign('Both', ['pod_lark', 'tank_s', 'legs', 'eng_sparrow', 'decoupler', 'tank_m', 'legs', 'eng_hammer']));
+    const bothPad = legsOf(both);
+    both.stage(); both.situation = 'flying'; both.st.rx += 3000; both.stage();
+    const dropped = both.debris.map((x) => x.craft.parts.filter((p) => p.role === 'legs').map((p) => p.deploy).join()).join();
+    d(`Lander on the pad: ${legsOf(lander)}; two-stage with legs on both: pad ${bothPad}, after separation ${legsOf(both)}, dropped stage legs deploy ${dropped}`);
+    // physics does not look at the legs' fold: contact geometry is the same folded or open
+    const k2 = new SB.Flight(sys, starter);
+    k2.stage(); k2.situation = 'flying'; k2.stage();
+    const g = k2.geometry(), geomUpper = JSON.stringify([g.bottomOffset, g.footHalfWidth]);
+    k2.craft.parts.find((p) => p.role === 'legs').deploy = 0;
+    k2.craft.invalidate();
+    const geomFolded = JSON.stringify([k2.geometry().bottomOffset, k2.geometry().footHalfWidth]);
+    d(`Upper-stage contact geometry open ${geomUpper}, folded ${geomFolded} (whole Kestrel on the pad ${geomBefore})`);
+    return pad === 'folded 0.00' && s1 === 'folded 0.00' && s2 === 'out 0.00' && /legs out/.test(msg) && mid === 'out 0.08' && end === 'out 1.00' &&
+      legsOf(lander) === 'out 1.00' && bothPad === 'folded 0.00, out 1.00' && legsOf(both) === 'out 0.00' && dropped === '1' && geomUpper === geomFolded;
+  });
+
   check('Plan and burn a transfer: map prediction shows a Pock encounter', (d) => {
     const f = orbitFlight;
     if (!f) return false;
@@ -350,6 +387,65 @@
     const w = dropTest({ height: 3000, descent: 30 });
     d(`3 km fall at 30 m/s with max warp requested -> ${w.outcome.type} at ${w.outcome.descent.toFixed(1)} m/s`);
     return fast.outcome.type === 'crashed' && tilted.outcome.type === 'crashed' && slide.outcome.type === 'crashed' && gentle.outcome.type === 'landed';
+  });
+
+  check('Alerts: stage empty, low fuel, and the landing cautions and warnings come up exactly when they should', (d) => {
+    // the starter's upper stage (legs, Sparrow lit) above flat ground on Pock
+    const at = (o) => {
+      const f = new SB.Flight(sys, starter);
+      f.stage(); f.stage();
+      const ang = findFlat(pock, 1.0), sf = sys.surfaceFrame(pock, ang), g = f.geometry();
+      const up = [Math.cos(ang), Math.sin(ang)], r = sf.R + g.bottomOffset + o.height;
+      f.situation = 'flying'; f.st.body = pock;
+      f.st.rx = up[0] * r; f.st.ry = up[1] * r;
+      const vd = o.descent, vh = o.horizontal || 0;
+      f.st.vx = -up[0] * vd - up[1] * vh; f.st.vy = -up[1] * vd + up[0] * vh;
+      f.heading = sf.normal + (o.tiltDeg || 0) / DEG;
+      f.setThrottle(0);
+      if (o.dry) for (const p of f.craft.parts) p.fuel = 0;
+      return f;
+    };
+    const ids = (f) => f.alerts().map((a) => `${a.id}:${a.level}`).join(' ') || 'none';
+    // heights at which braking at full thrust from 45 m/s to the touchdown limit takes a given share of the height
+    const probe = at({ height: 1000, descent: 0 });
+    const accel = probe.craft.thrustState(1, 0).thrust / probe.craft.mass() - probe.localGravity();
+    const L = probe.landingLimits().maxDescent, v = 45;
+    const hFor = (ratio) => (v * v - L * L) / (2 * accel) / ratio;
+    d(`Upper stage: ${probe.craft.mass().toFixed(0)} kg, net braking ${accel.toFixed(2)} m/s² on Pock; from ${v} m/s it needs ${hFor(1).toFixed(0)} m`);
+    const cases = [
+      [`${hFor(0.4).toFixed(0)} m at ${v} m/s (braking needs 40% of the height)`, at({ height: hFor(0.4), descent: v }), 'none'],
+      [`${hFor(0.75).toFixed(0)} m at ${v} m/s (75%)`, at({ height: hFor(0.75), descent: v }), 'sink:caution'],
+      [`${hFor(1.0).toFixed(0)} m at ${v} m/s (100%)`, at({ height: hFor(1.0), descent: v }), 'sink:warning'],
+      ['500 m at 10 m/s with empty tanks', at({ height: 500, descent: 10, dry: true }), 'sink:warning'],
+      ['100 m, 3 m/s down, 5 m/s sideways', at({ height: 100, descent: 3, horizontal: 5 }), 'drift:caution'],
+      ['20 m, 2 m/s down, tilted 30°', at({ height: 20, descent: 2, tiltDeg: 30 }), 'tilt:caution'],
+      ['5 m, 2 m/s down, upright', at({ height: 5, descent: 2 }), 'none'],
+      ['climbing away at 20 m/s, 5 m/s sideways', at({ height: 30, descent: -20, horizontal: 5 }), 'none'],
+    ];
+    let ok = true;
+    for (const [name, f, want] of cases) {
+      const got = ids(f);
+      ok = ok && got === want;
+      d(`${got === want ? 'ok ' : 'BAD'} ${name}: ${got}${got !== want ? ` (expected ${want})` : ''}${f.alerts()[0] ? ` · "${f.alerts()[0].text}"` : ''}`);
+    }
+
+    // a lit booster in orbit: fine, then low on fuel, then dry (Space still to press), then staged
+    const f = new SB.Flight(sys, starter);
+    const pre = ids(f);
+    f.stage();
+    const r = planet.radius + 25000;
+    f.situation = 'flying'; f.st.body = planet; f.st.rx = 0; f.st.ry = r; f.st.vx = Math.sqrt(planet.mu / r); f.st.vy = 0;
+    f.heading = 0; f.setThrottle(1);
+    const tanks = f.craft.sections().find((s) => s.engines.some((e) => f.craft.active.has(e.uid))).tanks;
+    const setFuel = (k) => tanks.forEach((t) => { t.fuel = t.fuelMax * k; });
+    setFuel(0.5); f.update(0.05); const half = ids(f);
+    setFuel(0.05); f.update(0.05); const low = ids(f);
+    setFuel(0); f.update(0.05); const empty = ids(f);
+    const msg = f.messages.map((m) => m.text).find((t) => t.startsWith('Out of fuel')) || '(no message)';
+    f.stage(); f.update(0.05); const staged = ids(f);
+    d(`Booster in orbit: pre-launch ${pre}; half full ${half}; 5% ${low}; empty ${empty} with message "${msg}"; after Space ${staged}`);
+    return ok && pre === 'none' && half === 'none' && low === 'fuel:caution' && empty === 'stage:caution' &&
+      msg === 'Out of fuel · press Space to stage' && staged === 'none';
   });
 
   check('Warp limiter drops to 1x before a terrain impact', (d) => {

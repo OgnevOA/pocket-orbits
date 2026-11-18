@@ -18,8 +18,13 @@ A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage 
   - The map predicts your path, with apoapsis, periapsis and moon encounters.
   - Plan burns by dragging handles, and chain a transfer and a capture before you leave orbit.
   - A burn-direction hold makes nodes easy to fly.
+  - Labels keep clear of each other, the markers and the panels, and the control deck slims down while the map is open.
+- **Cautions and warnings.**
+  - A stage running dry, low fuel, and a landing going wrong (sink rate, drift, tilt, steep ground) each get a labelled strip and a chime. The STAGE button pulses when a stage is waiting.
+  - *Sink rate · burn now* flashes the screen edges red and beeps.
+  - Nothing is shown by colour alone: HUD rows that need attention get a ⚠, and a safe orbit gets a ✓.
 - **Time warp** that slows itself before sphere-of-influence changes, the atmosphere, the ground and planned burns.
-- **Landings** judged on descent rate, drift, tilt and slope, with a clear landed or crashed result.
+- **Landings** judged on descent rate, drift, tilt and slope, with a clear landed or crashed result. Landing legs ride folded against the stack and swing down when their stage fires.
 - **Planets rendered on the GPU** from layered 3D noise and craters, lit by one sun with real day and night sides.
 - **Synthesised engine sound**: rumble, roar, crackle and turbopump whine, muffled in vacuum. There are no audio files.
 
@@ -70,7 +75,7 @@ You can also skip the node: burn prograde when the countdown runs out, and stop 
 1. Inside Pock's sphere of influence, warp until periapsis is about 40 s away.
 2. Press **R** (hold retrograde) and **Z**. Burn until an apoapsis below 15 km appears, then press **X**. Pock's gravity only reaches about 21.7 km above its surface.
 3. To deorbit, burn retrograde until **PERIAPSIS** is below −3 km.
-4. Fall with retrograde held. From about **500 m RADAR**, throttle to keep the descent rate near RADAR ÷ 10.
+4. Fall with retrograde held. From about **500 m RADAR**, throttle to keep the descent rate near RADAR ÷ 10. If the red **SINK RATE · BURN NOW** warning appears, go to full throttle at once.
 5. Below about 50 m, once sideways speed is under 1 m/s, press **T** and stand upright with **A**/**D**.
 6. A safe landing with legs needs descent ≤ 6 m/s, sideways speed ≤ 3 m/s, tilt ≤ 12° and ground slope ≤ 25°.
 
@@ -120,6 +125,8 @@ A circular orbit 25 km above Verdis takes about 630 m/s. The moons orbit clockwi
 
 **Landing** is judged on descent rate and sideways speed relative to the surface, tilt (against local vertical or the ground) and ground slope. Landing legs on the bottom stage raise the limits.
 
+**Alerts** follow the same limits. Sink rate compares the distance your engines need, at full thrust, to slow you to a safe touchdown speed with the height that's left: over 60% of it is a caution, over 90% a warning. Drift, tilt and steep ground are called out close to the ground, and only while you're descending. A descent flown at about RADAR ÷ 10, like the scripted landing in the tests, triggers none of them.
+
 **Planets** are rendered per pixel in a WebGL2 shader.
 - *Projection:* the map looks down on the orbital plane, so each body is a sphere seen from above its pole, and its rim is exactly the terrain outline you land on.
 - *Surface:* colour and relief come from layered 3D Perlin noise sampled on the sphere, plus crater and ridge height fields. Detail is limited to what the screen can show, so it stays sharp at any zoom, and smaller craters appear as you zoom in.
@@ -137,7 +144,7 @@ A circular orbit 25 km above Verdis takes about 630 m/s. The moons orbit clockwi
 Everything tunable lives in [`js/config.js`](js/config.js):
 - the planet, the moons and the launch site;
 - the part catalogue and the preset rockets;
-- the warp levels and landing limits;
+- the warp levels, the landing limits and the caution and warning thresholds;
 - each body's texture colours and crater counts, and the sun direction;
 - the paint palette, each part role's default colours and patterns, and the liveries;
 - each engine's sound profile and the audio levels.
@@ -154,10 +161,10 @@ js/craft.js         designs, staging, fuel sections, Δv/TWR analysis
 js/paint.js         part paint: colours, patterns, liveries
 js/coast.js         shared coasting with event detection, trajectory prediction
 js/maneuver.js      maneuver nodes, chained predictions, burn estimates
-js/sim.js           flight simulation, warp limiter, touchdown evaluation
+js/sim.js           flight simulation, warp limiter, alerts, touchdown evaluation
 js/planets.js       GPU sphere textures (noise, craters, lighting)
 js/render.js        part painter, flight view, map, attitude dial
-js/audio.js         synthesised engine sound
+js/audio.js         synthesised engine and alert sounds
 js/hangar.js        hangar UI and saved designs
 js/flightui.js      flight HUD, controls, maneuver panel
 js/main.js          app shell and game loop
@@ -170,7 +177,7 @@ docs/screenshots/   README images
 - [`tests/index.html`](https://ognevoa.github.io/pocket-orbits/tests/) runs the simulation checks in your browser. One of them flies the starter rocket from the pad to the surface of Pock.
 - [`tests/planets.html`](https://ognevoa.github.io/pocket-orbits/tests/planets.html) shows every world plus close-ups. Add `?fallback=1` for the 2D version.
 - [`tests/audio.html`](https://ognevoa.github.io/pocket-orbits/tests/audio.html) is a sound lab: hear each engine, play a launch sequence, and see the offline waveform checks.
-- `python3 tests/run_browser_tests.py all` runs everything in headless Chrome. That includes UI checks driven by real mouse and keyboard input: building and saving designs, flying with the keyboard, maneuver nodes, textures, sound, and a full mission inside the game page. It needs Python 3.9+ with `websockets` and Chrome or Chromium (set `CHROME=/path/to/chrome` to pick one).
+- `python3 tests/run_browser_tests.py all` runs everything in headless Chrome. That includes UI checks driven by real mouse and keyboard input: building and saving designs, flying with the keyboard, maneuver nodes, cautions and warnings, map labels, textures, sound, and a full mission inside the game page. It needs Python 3.9+ with `websockets` and Chrome or Chromium (set `CHROME=/path/to/chrome` to pick one).
 
 The scripted pilots in `tests/pilots.js` fly only with player controls: throttle, rotation, the attitude holds, staging and warp. `python3 tests/capture_screenshots.py` uses them to regenerate the screenshots in `docs/screenshots/` from a real mission (it also needs Pillow).
 

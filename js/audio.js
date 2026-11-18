@@ -79,7 +79,10 @@
     return { white, brown, pink, crackle };
   }
 
-  /** Master chain: engines bus -> compressor -> master volume -> destination. */
+  /**
+   * Master chain: engines bus -> compressor -> master volume -> destination. Alert sounds have their
+   * own bus straight into the master, so a roaring engine never squashes them.
+   */
   function buildChain(ctx) {
     const engineBus = ctx.createGain();
     engineBus.gain.value = 0;
@@ -88,11 +91,32 @@
     comp.attack.value = 0.005; comp.release.value = 0.2;
     const master = ctx.createGain();
     master.gain.value = 0.8;
+    const alertBus = ctx.createGain();
+    alertBus.gain.value = SB.CONFIG.audio.alertLevel;
     engineBus.connect(comp);
     comp.connect(master);
+    alertBus.connect(master);
     master.connect(ctx.destination);
-    return { engineBus, comp, master };
+    return { engineBus, comp, master, alertBus };
   }
+
+  /** A short tone with a soft attack and release (for the alert sounds). */
+  function tone(ctx, dest, freq, t, dur, level, type) {
+    const o = ctx.createOscillator();
+    o.type = type || 'triangle';
+    o.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(level, t + 0.012);
+    g.gain.setValueAtTime(level, t + dur - 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(dest);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  /** Caution: a falling two-tone chime. */
+  function chime(ctx, dest, t) { tone(ctx, dest, 880, t, 0.16, 0.5); tone(ctx, dest, 660, t + 0.17, 0.24, 0.5); }
+  /** Warning: two quick high pips (repeated while the warning lasts). */
+  function beep(ctx, dest, t) { tone(ctx, dest, 1250, t, 0.08, 0.3, 'square'); tone(ctx, dest, 1250, t + 0.13, 0.08, 0.3, 'square'); }
 
   class EngineVoice {
     constructor(ctx, dest, bufs) {
@@ -248,7 +272,7 @@
     voice: null,
     enabled: true,
     volume: 0.8,
-    stats: { ignitions: 0, flameouts: 0, level: 0, bus: 0 },
+    stats: { ignitions: 0, flameouts: 0, level: 0, bus: 0, chimes: 0, beeps: 0 },
     prev: null,
     flightRef: null,
 
@@ -308,6 +332,7 @@
       const busTarget = f && !f.paused ? (app.view === 'map' ? A.mapViewLevel : 1) : 0;
       this.chain.engineBus.gain.setTargetAtTime(busTarget, now, 0.08);
       this.stats.bus = busTarget;
+      this.updateAlerts(f, now);
       if (!this.voice) this.voice = new EngineVoice(this.ctx, this.chain.engineBus, this.bufs);
       if (!f) { this.voice.set({ level: 0, size: 0.5, throttle: 0, air: 1 }, 0.1); this.prev = null; this.stats.level = 0; return; }
       if (this.flightRef !== f) { this.flightRef = f; this.prev = null; }
@@ -344,15 +369,42 @@
       this.stats.level = level;
     },
 
+    /**
+     * A chime when a caution appears (again after it has been gone for 3 s, or only once for
+     * `once` alerts), and pips every half second while a warning lasts. Silent while paused.
+     */
+    updateAlerts(f, now) {
+      const list = f && !f.paused ? f.alertList || [] : [];
+      if (this.alertFlight !== f) { this.alertFlight = f; this.alertSeen = new Map(); this.nextBeep = 0; }
+      const seen = this.alertSeen;
+      let warning = false, chimed = false;
+      for (const a of list) {
+        const key = a.key || a.id;
+        const last = seen.get(key);
+        if (a.level === 'warning') warning = true;
+        else if (!chimed && (last === undefined || (!a.once && now - last > 3))) {
+          chime(this.ctx, this.chain.alertBus, now + 0.01);
+          this.stats.chimes++;
+          chimed = true;
+        }
+        seen.set(key, now);
+      }
+      if (warning && now >= this.nextBeep) {
+        beep(this.ctx, this.chain.alertBus, now + 0.01);
+        this.stats.beeps++;
+        this.nextBeep = now + 0.5;
+      }
+    },
+
     debug() {
       return {
         state: this.ctx ? this.ctx.state : 'none', enabled: this.enabled, volume: this.volume,
         level: this.stats.level, bus: this.stats.bus, ignitions: this.stats.ignitions, flameouts: this.stats.flameouts,
-        firing: !!(this.prev && this.prev.firing),
+        firing: !!(this.prev && this.prev.firing), chimes: this.stats.chimes, beeps: this.stats.beeps,
       };
     },
   };
 
   SB.Audio = Audio;
-  SB.AudioSynth = { makeBuffers, buildChain, EngineVoice, engineState, levelFor };
+  SB.AudioSynth = { makeBuffers, buildChain, EngineVoice, engineState, levelFor, chime, beep };
 })(typeof window !== 'undefined' ? window : globalThis);

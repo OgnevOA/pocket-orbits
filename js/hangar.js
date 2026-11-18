@@ -531,10 +531,13 @@
       for (const p of craft.parts) if (p.role === 'legs') ext = Math.max(ext, p.def.width / 2 + p.def.footSpread + 0.3);
       const badgeX = x + ext * s + 16;
 
-      // legs first (behind the stack)
+      // legs first (behind the stack), as they will be on the pad: folded unless the rocket stands on
+      // them. A selected leg ring opens its legs, so you can see them (and their paint).
+      craft.standOnLegs();
       for (const p of craft.parts) {
         if (p.role !== 'legs') continue;
-        SB.Render.drawLegStruts(ctx, p.def, x, y0 + (g.tops.get(p.uid) + p.def.height / 2) * s, y0 + g.legReach.get(p.uid) * s, s, SB.Paint.resolve(p.type, p.paint));
+        SB.Render.drawLegStruts(ctx, p.def, x, y0 + (g.tops.get(p.uid) + p.def.height / 2) * s, y0 + g.legReach.get(p.uid) * s, s,
+          SB.Paint.resolve(p.type, p.paint), p.legsOut || p.uid === this.selected ? 1 : 0);
       }
       craft.parts.forEach((p, i) => {
         const top = y0 + g.tops.get(p.uid) * s, h = p.def.height * s;

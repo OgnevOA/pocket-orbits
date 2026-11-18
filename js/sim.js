@@ -16,6 +16,7 @@
       this.cfg = SB.CONFIG;
       this.design = SB.Craft.cloneDesign(design);
       this.craft = SB.FlightCraft.fromDesign(this.design);
+      this.craft.standOnLegs();
       this.st = { body: sys.planet, t: 0, rx: 0, ry: 0, vx: 0, vy: 0 };
       this.heading = 0;
       this.omega = 0;
@@ -40,6 +41,8 @@
       this.soiLog = [];
       this.stageLog = [];
       this.maxAlt = 0;
+      this.alertList = [];
+      this.lastEngine = 'none';
       this.landedBody = sys.planet;
       this.landedAngle = sys.planet.launchAngle;
       this.placeOnSurface(sys.planet, sys.planet.launchAngle);
@@ -93,6 +96,77 @@
       if (b.parent && el.ra >= b.soi) return `Passing ${b.name}`;
       if (el.rp > safe) return `Orbiting ${b.name}`;
       return `Sub-orbital · ${b.name}`;
+    }
+
+    /** 'ok' if a lit engine has fuel, 'dry' if every lit engine has run out, 'none' if no engine is lit. */
+    engineStatus() {
+      const c = this.craft;
+      let lit = false;
+      for (const sec of c.sections()) {
+        if (!sec.engines.some((e) => c.active.has(e.uid))) continue;
+        lit = true;
+        if (c.sectionFuel(sec) > 1e-9) return 'ok';
+      }
+      return lit ? 'dry' : 'none';
+    }
+    hasNextStage() { return this.craft.nextStage < this.craft.stages.length; }
+    landingLimits() { return this.geometry().legsAtBottom ? this.cfg.landing.withLegs : this.cfg.landing.withoutLegs; }
+
+    /**
+     * Cautions and warnings for this moment, warnings first: {id, level: 'warning' | 'caution', text,
+     * key, once}. The HUD shows each with an icon and words, and the audio plays a chime for a new
+     * caution (once per key if `once`) and beeps while a warning lasts.
+     * The landing alerts mirror the touchdown limits. Sink rate compares the distance needed to brake
+     * to a safe touchdown speed at full thrust with the height that is left.
+     */
+    alerts() {
+      const out = [];
+      if (this.situation === 'crashed' || this.situation === 'prelaunch') return out;
+      const c = this.craft, A = this.cfg.alerts;
+      const eng = this.engineStatus();
+      if (eng !== 'ok' && this.hasNextStage()) {
+        out.push({ id: 'stage', level: 'caution', text: eng === 'dry' ? 'Stage empty · press Space' : 'No engine lit · press Space', key: 'stage' + c.nextStage, once: true });
+      }
+      if (eng === 'ok' && this.isThrusting()) {
+        const fu = c.activeStageFuel();
+        if (fu.max > 0 && fu.fuel / fu.max < A.lowFuel) out.push({ id: 'fuel', level: 'caution', text: `Low fuel · ${SB.Flight.pct(fu.fuel / fu.max)}`, key: 'fuel' + c.nextStage, once: true });
+      }
+      if (this.situation === 'flying') {
+        const radar = this.radarAltitude();
+        if (radar < A.groundRange) {
+          const lim = this.landingLimits();
+          const vs = this.verticalSpeed(), down = -vs;
+          if (down > lim.maxDescent) {
+            const accel = (eng === 'ok' ? c.thrustState(1, this.pressureRatio()).thrust / c.mass() : 0) - this.localGravity();
+            const need = accel > 0 ? (down * down - lim.maxDescent * lim.maxDescent) / (2 * accel) : Infinity;
+            const ratio = need / Math.max(0.5, radar);
+            if (ratio > A.sinkWarning) out.push({ id: 'sink', level: 'warning', text: accel > 0 ? 'Sink rate · burn now' : 'Sink rate · no thrust', key: 'sink' });
+            else if (ratio > A.sinkCaution) out.push({ id: 'sink', level: 'caution', text: 'Sink rate', key: 'sink' });
+          }
+          if (vs < 0) {
+            const b = this.st.body, ang = Math.atan2(this.st.ry, this.st.rx);
+            const hs = Math.abs(this.horizontalSpeed());
+            if (radar < A.driftRange && hs > lim.maxHorizontal) out.push({ id: 'drift', level: 'caution', text: `Drift · ${hs.toFixed(1)} m/s sideways`, key: 'drift' });
+            if (radar < Math.max(A.tiltRange, A.slopeRange)) {
+              const sf = this.sys.surfaceFrame(b, ang);
+              const tilt = Math.min(Math.abs(wrap(this.heading - sf.normal)), Math.abs(wrap(this.heading - ang))) * DEG;
+              if (radar < A.tiltRange && tilt > lim.maxTiltDeg) out.push({ id: 'tilt', level: 'caution', text: `Tilt ${tilt.toFixed(0)}° · stand upright`, key: 'tilt' });
+              const slope = Math.abs(sf.slope) * DEG;
+              if (radar < A.slopeRange && slope > this.cfg.landing.maxSlopeDeg) out.push({ id: 'slope', level: 'caution', text: `Steep ground · ${slope.toFixed(0)}°`, key: 'slope' });
+            }
+          }
+        }
+      }
+      return out.sort((a, b) => (a.level === 'warning' ? 0 : 1) - (b.level === 'warning' ? 0 : 1));
+    }
+
+    /** Says so when the lit engines run out of fuel. */
+    trackEngine() {
+      const eng = this.engineStatus();
+      if (this.lastEngine === 'ok' && eng === 'dry' && this.situation !== 'crashed') {
+        this.msg(this.hasNextStage() ? 'Out of fuel · press Space to stage' : 'Out of fuel', 'warn', 'flameout');
+      }
+      this.lastEngine = eng;
     }
 
     /**
@@ -169,13 +243,14 @@
       const tilt = Math.min(Math.abs(wrap(this.heading - sf.normal)), Math.abs(wrap(this.heading - ang))) * DEG;
       const slope = Math.abs(sf.slope) * DEG;
       const g = this.geometry();
-      const lim = g.legsAtBottom ? this.cfg.landing.withLegs : this.cfg.landing.withoutLegs;
+      const lim = this.landingLimits();
+      const maxSlope = this.cfg.landing.maxSlopeDeg;
       const descent = Math.max(0, -vn), horizontal = Math.abs(vt);
       const reasons = [];
       if (descent > lim.maxDescent) reasons.push(`descent rate ${descent.toFixed(1)} m/s (limit ${lim.maxDescent} m/s)`);
       if (horizontal > lim.maxHorizontal) reasons.push(`horizontal speed ${horizontal.toFixed(1)} m/s (limit ${lim.maxHorizontal} m/s)`);
       if (tilt > lim.maxTiltDeg) reasons.push(`tilted ${tilt.toFixed(0)}° from the surface (limit ${lim.maxTiltDeg}°)`);
-      if (slope > 25) reasons.push(`ground slope ${slope.toFixed(0)}° is too steep (limit 25°)`);
+      if (slope > maxSlope) reasons.push(`ground slope ${slope.toFixed(0)}° is too steep (limit ${maxSlope}°)`);
       const report = { body: b, descent, horizontal, tilt, slope, legs: g.legsAtBottom, limits: lim, t: st.t, speed: Math.hypot(st.vx, st.vy), reasons };
       if (reasons.length) this.crash(report);
       else this.land(report, ang);
@@ -198,6 +273,7 @@
       this.throttle = 0;
       this.warpIndex = 0;
       this.prediction = null;
+      this.alertList = [];
       this.planner.clear();
       this.spawnExplosion(this.st.rx, this.st.ry, 90);
       this.msg(`Crashed into ${report.body.name}`, 'bad');
@@ -239,6 +315,7 @@
       const parts = [];
       if (dropped) parts.push(`dropped ${dropped} part${dropped > 1 ? 's' : ''}`);
       if (res.ignited.length) parts.push('ignited ' + res.ignited.map((p) => p.def.name.split(' ')[0]).join(', '));
+      if (res.legs.length) parts.push('legs out');
       this.msg(`Stage ${res.number}: ${parts.join(' · ') || 'nothing to do'}`, 'info');
       this.stageLog.push({ number: res.number, t: st.t, alt: this.altitude() });
       this.predDirty = true;
@@ -336,9 +413,10 @@
     // ------------------------------------------------------------------ simulation
     update(realDt) {
       this.realClock += realDt;
-      if (this.paused) return;
+      if (this.paused) { this.alertList = this.alerts(); return; }
       realDt = Math.min(realDt, 0.1);
       this.updateParticles(realDt);
+      this.animateLegs(realDt);
       if (this.situation === 'crashed') return;
       if (this.throttleInput) this.setThrottle(this.throttle + this.throttleInput * this.cfg.control.throttleRate * realDt);
       this.maybePredict(false);
@@ -359,6 +437,8 @@
       }
       this.maybePredict(false);
       this.planner.update();
+      this.trackEngine();
+      this.alertList = this.alerts();
     }
 
     /** Advances exactly `seconds` of simulation time at physics resolution (used by tests and autopilots). */
@@ -569,6 +649,13 @@
       }
     }
 
+    /** Opening legs swing down in real time (the same speed under time warp). Cosmetic only. */
+    animateLegs(realDt) {
+      for (const p of this.craft.parts) {
+        if (p.role === 'legs' && p.legsOut && p.deploy < 1) p.deploy = Math.min(1, p.deploy + realDt / (p.def.deployTime || 1.2));
+      }
+    }
+
     updateParticles(dt) {
       for (let i = this.particles.length - 1; i >= 0; i--) {
         const p = this.particles[i];
@@ -579,6 +666,9 @@
       }
     }
   }
+
+  /** A fraction as a whole percentage, rounded down (so 9.6% never reads as 10%), and "<1%" for a nearly empty tank. */
+  Flight.pct = (frac) => (frac > 0 && frac < 0.01 ? '<1%' : Math.floor(frac * 100 + 1e-9) + '%');
 
   SB.Flight = Flight;
 })(typeof window !== 'undefined' ? window : globalThis);

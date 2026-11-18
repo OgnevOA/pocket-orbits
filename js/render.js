@@ -177,21 +177,48 @@
     for (const k of [-0.3, 0, 0.3]) { ctx.beginPath(); ctx.arc(x + k * w, y + h / 2, Math.max(0.6, s * 0.04), 0, TAU); ctx.fill(); }
   }
 
-  function drawLegStruts(ctx, d, x, yHip, yFoot, s, pt) {
+  /**
+   * The legs of a leg ring, on both sides of the stack. `deploy` runs from 0, folded up flat against
+   * the side of the stack, to 1 (the default), down and out on their feet. In between, each leg swings
+   * outward about its hinge in the ring. Purely visual: contact always uses the deployed shape.
+   */
+  function drawLegStruts(ctx, d, x, yHip, yFoot, s, pt, deploy) {
+    const t = deploy === undefined ? 1 : Math.max(0, Math.min(1, deploy));
+    const e = t * t * (3 - 2 * t); // ease in and out
     const w = d.width * s;
     const col = (pt && pt.accent) || '#aab2bd';
+    // one leg, in coordinates measured from its hinge: x away from the stack axis, y down
+    const hinge = w * 0.44;
+    const foot = [w / 2 + d.footSpread * s - hinge, yFoot - yHip];
+    const knee = [w / 2 + d.footSpread * s * 0.8 - hinge, (yFoot - yHip) * 0.35];
+    const L = Math.hypot(foot[0], foot[1]) || 1;
+    const u = [foot[0] / L, foot[1] / L], v = [-u[1], u[0]];
+    const ku = knee[0] * u[0] + knee[1] * u[1], kv = knee[0] * v[0] + knee[1] * v[1];
+    const aOut = Math.atan2(foot[1], foot[0]);
+    const fold = Math.min(L, w * 0.06 + s * 0.14); // folded, the foot sits just outside the stack's side
+    const aIn = Math.atan2(-Math.sqrt(L * L - fold * fold), fold);
+    const a = aIn + (aOut - aIn) * e;
+    const U = [Math.cos(a), Math.sin(a)], V = [-U[1], U[0]];
+    const K = [ku * U[0] + kv * e * V[0], ku * U[1] + kv * e * V[1]]; // the knee straightens as it folds
+    const F = [L * U[0], L * U[1]];
     ctx.lineCap = 'round';
     for (const side of [-1, 1]) {
-      const hx = x + side * w * 0.44, fx = x + side * (w / 2 + d.footSpread * s);
-      const kx = x + side * (w / 2 + d.footSpread * s * 0.8), ky = yHip + (yFoot - yHip) * 0.35;
+      const hx = x + side * hinge;
+      const kx = hx + side * K[0], ky = yHip + K[1];
+      const fx = hx + side * F[0], fy = yHip + F[1];
       ctx.strokeStyle = shade(col, -0.65);
       ctx.lineWidth = Math.max(1.5, s * 0.16);
-      ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, yFoot); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
       ctx.strokeStyle = col;
       ctx.lineWidth = Math.max(0.8, s * 0.08);
-      ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, yFoot); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, fy); ctx.stroke();
+      // the foot pad turns with the leg (flat on the ground when deployed)
+      ctx.save();
+      ctx.translate(fx, fy);
+      ctx.rotate(side * (a - aOut));
       ctx.fillStyle = '#2d3238';
-      ctx.fillRect(fx - s * 0.25, yFoot - s * 0.07, s * 0.5, s * 0.1);
+      ctx.fillRect(-s * 0.25, -s * 0.07, s * 0.5, s * 0.1);
+      ctx.restore();
     }
   }
 
@@ -251,7 +278,7 @@
       }
     }
     for (const p of craft.parts) {
-      if (p.role === 'legs') drawLegStruts(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.5) * s, top + g.legReach.get(p.uid) * s, s, strutPaint(p.type, p.paint));
+      if (p.role === 'legs') drawLegStruts(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.5) * s, top + g.legReach.get(p.uid) * s, s, strutPaint(p.type, p.paint), p.deploy);
     }
     for (const p of craft.parts) drawPart(ctx, p.type, 0, top + g.tops.get(p.uid) * s, s, p.paint);
     ctx.restore();
@@ -569,33 +596,78 @@
     return `${sec}s`;
   }
 
-  // Simple label collision avoidance for the map: nudges labels down, or drops them.
-  let placed = null;
-  let labelMaxX = Infinity; // labels that would run under the right-hand HUD panel flip to the left
-  function label(ctx, text, x, y, color, align) {
-    ctx.font = '12px "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
-    if (placed) {
-      const w = ctx.measureText(text).width, h = 14;
-      if ((align || 'left') === 'left' && x + w > labelMaxX) x = x - w - 20;
-      const x0 = align === 'center' ? x - w / 2 : x;
-      let ok = false;
-      for (let k = 0; k < 4 && !ok; k++) {
-        const yy = y + k * 15;
-        ok = !placed.some((r) => x0 < r[0] + r[2] && x0 + w > r[0] && yy - h / 2 < r[1] + r[3] && yy + h / 2 > r[1]);
-        if (ok) { y = yy; placed.push([x0, yy - h / 2, w, h]); }
-      }
-      if (!ok) return;
+  // ---- map labels
+  // Labels are collected while the map is drawn and placed at the end, on top of everything. Each one
+  // tries spots around its anchor (its preferred side first, then the others, then a little farther
+  // out) and takes the first that is clear of the labels already placed, the map markers and the HUD
+  // panels. Higher priorities go first. A label with no room is dropped, unless it is important
+  // (priority 3+: nodes, encounters, impacts, the click hint), which then takes its preferred spot.
+  const LABEL_FONT = '12px "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
+  const LABEL_H = 15;
+  const SIDES = ['e', 'ne', 'se', 'w', 'nw', 'sw', 'n', 's'];
+  let labels = null, obstacles = null;
+  const overlaps = (a, b) => a[0] < b[0] + b[2] && a[0] + a[2] > b[0] && a[1] < b[1] + b[3] && a[1] + a[3] > b[1];
+
+  /** Keeps labels off a marker at (x, y) with half-size r. Only active while the map is drawn. */
+  function obstacle(x, y, r) { if (obstacles) obstacles.push([x - r, y - r, 2 * r, 2 * r]); }
+  /** gap: distance from the anchor; at least the half-size of the anchor's own marker, so a label never covers it. */
+  function label(text, x, y, color, prio, side, gap) {
+    if (labels) labels.push({ text, x, y, color, prio: prio || 1, side: side || 'e', gap: gap || 10, i: labels.length });
+  }
+
+  function labelSpot(side, x, y, w, gap) {
+    const h = LABEL_H;
+    switch (side) {
+      case 'e': return [x + gap, y - h / 2];
+      case 'ne': return [x + gap, y - gap - h];
+      case 'se': return [x + gap, y + gap];
+      case 'w': return [x - gap - w, y - h / 2];
+      case 'nw': return [x - gap - w, y - gap - h];
+      case 'sw': return [x - gap - w, y + gap];
+      case 'n': return [x - w / 2, y - gap - h];
+      default: return [x - w / 2, y + gap];
     }
-    ctx.textAlign = align || 'left';
+  }
+
+  function placeLabels(ctx, W, H) {
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(3,6,14,0.85)';
-    ctx.strokeText(text, x, y);
-    ctx.fillStyle = color;
-    ctx.fillText(text, x, y);
+    const done = [];
+    const clear = (r) => r[0] >= 2 && r[1] >= 2 && r[0] + r[2] <= W - 2 && r[1] + r[3] <= H - 2 &&
+      !done.some((q) => overlaps(r, q.r)) && !obstacles.some((q) => overlaps(r, q));
+    labels.sort((a, b) => b.prio - a.prio || a.i - b.i);
+    for (const L of labels) {
+      const w = ctx.measureText(L.text).width + 4;
+      const order = [L.side].concat(SIDES.filter((s) => s !== L.side));
+      let rect = null;
+      for (const gap of [L.gap, L.gap + 16]) {
+        for (const s of order) {
+          const p = labelSpot(s, L.x, L.y, w, gap);
+          const r = [p[0], p[1], w, LABEL_H];
+          if (clear(r)) { rect = r; break; }
+        }
+        if (rect) break;
+      }
+      let forced = false;
+      if (!rect) {
+        if (L.prio < 3) continue;
+        const p = labelSpot(L.side, L.x, L.y, w, L.gap);
+        rect = [p[0], p[1], w, LABEL_H];
+        forced = true;
+      }
+      done.push({ text: L.text, r: rect, prio: L.prio, forced });
+      ctx.strokeText(L.text, rect[0] + 2, rect[1] + LABEL_H / 2);
+      ctx.fillStyle = L.color;
+      ctx.fillText(L.text, rect[0] + 2, rect[1] + LABEL_H / 2);
+    }
+    return done;
   }
 
   function marker(ctx, type, x, y, color) {
+    obstacle(x, y, 8);
     ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
     if (type === 'ap' || type === 'pe') {
       ctx.beginPath();
@@ -614,6 +686,7 @@
   }
 
   function progradeMarker(ctx, x, y, retro) {
+    obstacle(x, y, 12);
     ctx.strokeStyle = '#9dff6b'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y, 6, 0, TAU); ctx.stroke();
     ctx.beginPath();
@@ -628,6 +701,7 @@
   }
 
   function radialMarker(ctx, x, y, inward) {
+    obstacle(x, y, 11);
     ctx.strokeStyle = '#5ee6ff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y, 6, 0, TAU); ctx.stroke();
     ctx.beginPath();
@@ -659,8 +733,8 @@
     ctx.fillStyle = '#04070f';
     ctx.fillRect(0, 0, W, H);
     drawStars(ctx, W, H, 0, 0.6);
-    placed = [];
-    labelMaxX = W - 310;
+    labels = [];
+    obstacles = mv.hudRects().slice(); // labels stay out from under the HUD panels
     const focusBody = mv.focusBody();
 
     // moon orbits and SOIs
@@ -685,7 +759,9 @@
       drawBodyDisc(ctx, sys, body, q[0], q[1], sc, 0, t);
       if (Rpx < 4) { ctx.fillStyle = body.palette.rim; ctx.beginPath(); ctx.arc(q[0], q[1], 3.5, 0, TAU); ctx.fill(); }
       const lr = Math.max(Rpx, 4);
-      label(ctx, body.name + (f.target === body ? ' ◎' : ''), q[0] + lr * 0.72 + 8, q[1] - lr * 0.72 - 6, f.target === body ? '#ffc861' : '#cfe0ff');
+      const name = body.name + (f.target === body ? ' ◎' : ''), col = f.target === body ? '#ffc861' : '#cfe0ff', prio = f.target === body ? 2 : 1;
+      if (lr < 40) { obstacle(q[0], q[1], lr + 2); label(name, q[0], q[1], col, prio, 'ne', lr + 3); }
+      else label(name, q[0] + lr * 0.72, q[1] - lr * 0.72, col, prio, 'ne', 8); // big discs: just off the rim
     }
 
     // trajectories: the actual prediction, then the planned leg after each maneuver node
@@ -736,7 +812,7 @@
           if (P.ts[k] > limitT && cut === P.xs.length - 1) cut = k;
         }
         // kept for dragging a node later along its leg, even where the leg is not drawn
-        pick.push({ layer: layerIdx, xs, ys, ts: P.ts, maxT: limitT });
+        pick.push({ layer: layerIdx, xs, ys, ts: P.ts, maxT: limitT, body: seg.body, wx: P.xs, wy: P.ys });
         if (planned && seg.t0 > limitT) return;
         if (seg.body.parent && !isLive(seg.body, seg.refT)) drawGhost(seg.body, seg.refT);
         ctx.strokeStyle = col;
@@ -751,16 +827,17 @@
           const q = toS(ref[0] + mk.pos[0], ref[1] + mk.pos[1]);
           marker(ctx, mk.type, q[0], q[1], col);
           const dt = mk.t - t;
-          if (mk.type === 'ap') label(ctx, `Ap ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0] + 10, q[1] - 10, col);
-          if (mk.type === 'pe') label(ctx, `Pe ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0] + 10, q[1] + 12, col);
-          if (mk.type === 'impact') label(ctx, `Impact ${seg.body.name} · ${fmtDur(dt)}`, q[0] + 10, q[1], '#ff8a8a');
-          if (mk.type === 'atmo') label(ctx, 'Atmosphere', q[0] + 9, q[1], col);
+          if (mk.type === 'ap') label(`Ap ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0], q[1], col, 2, 'ne');
+          if (mk.type === 'pe') label(`Pe ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0], q[1], col, 2, 'se');
+          if (mk.type === 'impact') label(`Impact ${seg.body.name} · ${fmtDur(dt)}`, q[0], q[1], '#ff8a8a', 3, 'e');
+          if (mk.type === 'atmo') label('Atmosphere', q[0], q[1], col, 1, 'e');
         }
         if (seg.end && seg.end.type === 'soi' && seg.end.t <= limitT) {
           const last = P.xs.length - 1;
           marker(ctx, 'soi', xs[last], ys[last], planned ? PLAN_COLORS[(i + 1) % PLAN_COLORS.length] : SEG_COLORS[(i + 1) % SEG_COLORS.length]);
-          const txt = seg.end.to.parent ? `Encounter ${seg.end.to.name} · ${fmtDur(seg.end.t - t)}` : `Leave ${seg.end.from.name} SOI · ${fmtDur(seg.end.t - t)}`;
-          label(ctx, txt, xs[last] + 10, ys[last] - 12, '#ffd28a');
+          const enc = !!seg.end.to.parent;
+          const txt = enc ? `Encounter ${seg.end.to.name} · ${fmtDur(seg.end.t - t)}` : `Leave ${seg.end.from.name} SOI · ${fmtDur(seg.end.t - t)}`;
+          label(txt, xs[last], ys[last], '#ffd28a', enc ? 3 : 2, 'ne');
         }
       });
     }
@@ -779,7 +856,7 @@
       ctx.globalAlpha = 1;
       ctx.strokeStyle = '#ffc861'; ctx.beginPath(); ctx.arc(m[0], m[1], Math.max(5, ca.target.soi * sc), 0, TAU); ctx.stroke();
       marker(ctx, 'atmo', a[0], a[1], '#ffc861');
-      label(ctx, `Closest ${ca.target.name}: ${fmtAlt(ca.dist)} · ${fmtDur(ca.t - t)}`, a[0] + 10, a[1] + 14, '#ffc861');
+      label(`Closest ${ca.target.name}: ${fmtAlt(ca.dist)} · ${fmtDur(ca.t - t)}`, a[0], a[1], '#ffc861', 2, 'se');
     }
 
     // maneuver nodes and the selected node's handles
@@ -816,8 +893,9 @@
         if (sel) { ctx.shadowColor = '#5ea2ff'; ctx.shadowBlur = 12; }
         ctx.beginPath(); ctx.arc(q[0], q[1], sel ? 7.5 : 6, 0, TAU); ctx.fill(); ctx.stroke();
         ctx.shadowBlur = 0;
+        obstacle(q[0], q[1], 10);
         const idx = planner.indexOf(inf.node) + 1;
-        label(ctx, `Node ${idx} · Δv ${inf.total.toFixed(1)} m/s · ${inf.node.t > t ? fmtDur(inf.node.t - t) : 'now'}`, q[0] + 12, q[1] + (sel ? 52 : 16), '#9cc4ff');
+        label(`Node ${idx} · Δv ${inf.total.toFixed(1)} m/s · ${inf.node.t > t ? fmtDur(inf.node.t - t) : 'now'}`, q[0], q[1], '#9cc4ff', sel ? 5 : 4, 'se', 12);
       }
     }
     if (mv.hover && !mv.drag) {
@@ -825,7 +903,8 @@
       ctx.strokeStyle = '#eaf2ff'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(h.x, h.y, 6, 0, TAU); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(h.x - 3.5, h.y); ctx.lineTo(h.x + 3.5, h.y); ctx.moveTo(h.x, h.y - 3.5); ctx.lineTo(h.x, h.y + 3.5); ctx.stroke();
-      label(ctx, `Click: add maneuver · ${fmtDur(h.t - t)}`, h.x + 11, h.y - 12, '#eaf2ff');
+      obstacle(h.x, h.y, 8);
+      label(`Alt ${fmtAlt(h.alt)}${h.body !== f.body ? ` (${h.body.name})` : ''} · ${fmtDur(h.t - t)}`, h.x, h.y, '#eaf2ff', 6, 'ne');
     }
 
     // craft
@@ -835,6 +914,7 @@
       ctx.fillStyle = '#ffd36b'; ctx.strokeStyle = '#1a1206'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(6, 7); ctx.lineTo(0, 4); ctx.lineTo(-6, 7); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.restore();
+      obstacle(q[0], q[1], 12);
       const v = f.speed();
       if (v > 0.5 && !f.isLanded()) {
         const ux = f.st.vx / v, uy = f.st.vy / v;
@@ -853,8 +933,15 @@
     const bx = W - 30 - bar * sc, by = H - 26;
     ctx.strokeStyle = '#8fa3c3'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(bx, by - 5); ctx.lineTo(bx, by); ctx.lineTo(bx + bar * sc, by); ctx.lineTo(bx + bar * sc, by - 5); ctx.stroke();
-    label(ctx, fmtAlt(bar), bx + (bar * sc) / 2, by - 12, '#8fa3c3', 'center');
-    placed = null;
+    ctx.font = LABEL_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#8fa3c3';
+    ctx.fillText(fmtAlt(bar), bx + (bar * sc) / 2, by - 12);
+    obstacles.push([bx - 4, by - 22, bar * sc + 8, 26]);
+
+    // labels last, on top of every marker
+    mv.labelInfo = { placed: placeLabels(ctx, W, H), obstacles, requested: labels.length };
+    labels = null;
+    obstacles = null;
   }
 
   // ------------------------------------------------------------ attitude dial

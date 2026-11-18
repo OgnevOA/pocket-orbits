@@ -24,6 +24,20 @@
     half() { const [W, H] = this.size(); return Math.min(W, H) / 2; }
     /** Usable half-size for "fit" views, keeping clear of the HUD side panels and control deck. */
     fitHalf() { const [W, H] = this.size(); return Math.max(150, Math.min(H / 2 - 70, (W - 640) / 2)); }
+    /** Rectangles (canvas pixels, with a small margin) of the HUD panels over the map; re-measured a few times a second. */
+    hudRects() {
+      const now = performance.now();
+      if (this._hud && now - this._hudT < 250) return this._hud;
+      const cv = $('view').getBoundingClientRect();
+      const out = [];
+      for (const el of document.querySelectorAll('#telemetry, #nodePanel, #mapPanel, #controls, #situation, #clock, #warpBox, #warpNote, #flight .top-right, #alerts')) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) out.push([r.left - cv.left - 4, r.top - cv.top - 4, r.width + 8, r.height + 8]);
+      }
+      this._hud = out;
+      this._hudT = now;
+      return out;
+    }
     focusPoint(t) {
       const f = this.app.flight, sys = this.app.sys;
       let p;

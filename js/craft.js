@@ -103,7 +103,10 @@
     constructor(parts, stages) {
       this.parts = parts.map((p) => {
         const d = def(p.type);
-        return { uid: p.uid, type: p.type, def: d, role: role(p.type), fuel: p.fuel !== undefined ? p.fuel : d.fuel || 0, fuelMax: d.fuel || 0, paint: p.paint || null };
+        const q = { uid: p.uid, type: p.type, def: d, role: role(p.type), fuel: p.fuel !== undefined ? p.fuel : d.fuel || 0, fuelMax: d.fuel || 0, paint: p.paint || null };
+        // landing legs (cosmetic): legsOut once told to open; deploy animates 0 (folded) .. 1 (down)
+        if (q.role === 'legs') { q.legsOut = !!p.legsOut; q.deploy = q.legsOut ? 1 : 0; }
+        return q;
       });
       this.stages = (stages || []).map((s) => s.slice());
       this.nextStage = 0;
@@ -213,7 +216,29 @@
         if (p && p.role === 'engine') { this.active.add(uid); res.ignited.push(p); }
       }
       this.invalidate();
+      res.legs = this.openLegs(res.decoupled.length > 0);
       return res;
+    }
+
+    /**
+     * Landing legs open when their own part of the stack comes alive: an engine in their section is
+     * lit, or (after a separation) their section is now the bottom of the craft. So legs that can
+     * touch the ground are always open. Returns the legs that were told to open.
+     */
+    openLegs(separated) {
+      const secs = this.sections(), out = [];
+      secs.forEach((sec, i) => {
+        const lit = sec.engines.some((e) => this.active.has(e.uid));
+        const bottom = separated && i === secs.length - 1;
+        for (const p of sec.parts) if (p.role === 'legs' && !p.legsOut && (lit || bottom)) { p.legsOut = true; out.push(p); }
+      });
+      return out;
+    }
+
+    /** Legs at the bottom of the stack start open (the rocket stands on them); all others start folded. */
+    standOnLegs() {
+      const secs = this.sections(), bottom = secs[secs.length - 1];
+      for (const p of bottom ? bottom.parts : []) if (p.role === 'legs') { p.legsOut = true; p.deploy = 1; }
     }
 
     /** Separates at a decoupler; the side without the command pod is removed (with the decoupler). */

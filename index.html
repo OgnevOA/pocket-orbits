@@ -56,6 +56,7 @@
   <!-- ============================== FLIGHT ============================== -->
   <section id="flight" class="screen hidden">
     <canvas id="view"></canvas>
+    <div id="vignette" aria-hidden="true"></div>
     <div id="topbar">
       <div id="situation"></div>
       <div id="clock"></div>
@@ -75,7 +76,10 @@
     </div>
     <div id="telemetry" class="panel hud"></div>
     <div id="stageStack" class="panel hud"></div>
-    <div id="messages"></div>
+    <div id="hudCenter">
+      <div id="alerts" role="status" aria-live="assertive"></div>
+      <div id="messages" aria-live="polite"></div>
+    </div>
     <div id="mapPanel" class="panel hud hidden"></div>
     <div id="nodePanel" class="panel hud hidden"></div>
     <div id="controls" class="panel hud">
@@ -144,6 +148,17 @@
       <p class="note">Time warp above 4× only works while coasting outside the atmosphere. It slows down by itself before
         sphere-of-influence changes, atmospheric entry, the ground and the start of a planned maneuver burn.</p>
 
+      <h2>Cautions and warnings</h2>
+      <ul>
+        <li><b>Cautions</b> appear as amber ⚠ strips under the warp control, with a two-tone chime: <i>Stage empty</i> (the
+          <b>STAGE</b> button pulses too), <i>Low fuel</i>, and near the ground <i>Sink rate</i>, <i>Drift</i>, <i>Tilt</i> and
+          <i>Steep ground</i>.</li>
+        <li>A <b>warning</b> is red: the screen edges flash and it beeps. <i>Sink rate · burn now</i> means that even at
+          full thrust you will only just slow to a safe touchdown speed before the ground.</li>
+        <li>HUD rows that need attention get a ⚠ and turn amber or red. <b>PERIAPSIS</b> gets a ✓ once the orbit clears the
+          atmosphere (or the surface).</li>
+      </ul>
+
       <h2>Maneuver nodes</h2>
       <ul>
         <li>In the map (<kbd>M</kbd>), <b>click your trajectory</b> to add a node there. Its dashed path shows the orbit after the burn,
@@ -184,7 +199,7 @@
         <li>After “Entered Pock’s sphere of influence”, warp until the periapsis timer reads ~40 s.</li>
         <li><kbd>R</kbd> (retrograde) and <kbd>Z</kbd>: burn until an apoapsis appears below ~15 km. Pock’s gravity reaches only ~21 km up. <kbd>X</kbd>.</li>
         <li>To deorbit: <kbd>R</kbd>, <kbd>Z</kbd> until <b>PERIAPSIS</b> is below −3 km, then <kbd>X</kbd>.</li>
-        <li>Warp down (it slows near the ground). Keep retrograde hold. At about <b>500 m RADAR</b>, throttle up and keep the descent rate near RADAR ÷ 10.</li>
+        <li>Warp down (it slows near the ground). Keep retrograde hold. At about <b>500 m RADAR</b>, throttle up and keep the descent rate near RADAR ÷ 10. A red <b>SINK RATE · BURN NOW</b> means full throttle, now.</li>
         <li>Below ~50 m, once horizontal speed is under 1 m/s: <kbd>T</kbd> (stability), stand upright with <kbd>A</kbd>/<kbd>D</kbd> and settle down slowly.</li>
         <li>Safe touchdown with legs: descent ≤ 6 m/s, horizontal ≤ 3 m/s, tilt ≤ 12°, ground slope ≤ 25° (the HUD's <b>GROUND</b> row shows slope).</li>
       </ol>

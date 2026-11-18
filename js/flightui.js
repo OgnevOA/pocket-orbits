@@ -226,7 +226,7 @@
           const tk = p.ts[k];
           if (tk <= now + 2 || (!opt.anywhere && tk >= p.maxT)) continue;
           const d = Math.hypot(p.xs[k] - x, p.ys[k] - y);
-          if (d < bd) { bd = d; best = { x: p.xs[k], y: p.ys[k], t: tk, layer: p.layer }; }
+          if (d < bd) { bd = d; best = { x: p.xs[k], y: p.ys[k], t: tk, layer: p.layer, body: p.body, alt: Math.hypot(p.wx[k], p.wy[k]) - p.body.radius }; }
         }
       }
       return best;
@@ -308,7 +308,7 @@
         ${row('Descent rate', fmtSpeed(o.descent), `limit ${L.maxDescent} m/s`, o.descent > L.maxDescent)}
         ${row('Horizontal speed', fmtSpeed(o.horizontal), `limit ${L.maxHorizontal} m/s`, o.horizontal > L.maxHorizontal)}
         ${row('Tilt', o.tilt.toFixed(1) + '°', `limit ${L.maxTiltDeg}°`, o.tilt > L.maxTiltDeg)}
-        ${row('Ground slope', o.slope.toFixed(1) + '°', 'limit 25°', o.slope > 25)}
+        ${row('Ground slope', o.slope.toFixed(1) + '°', `limit ${SB.CONFIG.landing.maxSlopeDeg}°`, o.slope > SB.CONFIG.landing.maxSlopeDeg)}
         <div class="kv"><span>Landing legs</span><b>${o.legs ? 'yes' : 'no (strict limits)'}</b><small></small></div>
         ${o.reasons.length ? '<ul class="reasons">' + o.reasons.map((r) => `<li>${esc(r)}</li>`).join('') + '</ul>' : ''}
         <div class="actions">
@@ -347,6 +347,7 @@
       $('btnMap').classList.toggle('active', this.app.view === 'map');
       $('mapPanel').classList.toggle('hidden', this.app.view !== 'map');
       $('flight').classList.toggle('view-map', this.app.view === 'map');
+      this.renderAlerts();
       this.renderMessages();
       // dragging a node handle changes delta-v at a rate that grows with the drag distance
       const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
@@ -503,6 +504,17 @@
       if (info._html !== html) { info.innerHTML = html; info._html = html; }
     }
 
+    /** Caution and warning strips, the flashing screen edges for warnings, and the STAGE prompt. */
+    renderAlerts() {
+      const f = this.f, list = f.alertList || [];
+      const html = list.map((a) => `<div class="alert ${a.level}" data-alert="${a.id}"><i aria-hidden="true">⚠&#xFE0E;</i>${esc(a.text)}</div>`).join('');
+      const el = $('alerts');
+      if (el._html !== html) { el.innerHTML = html; el._html = html; }
+      $('vignette').classList.toggle('on', !f.paused && list.some((a) => a.level === 'warning'));
+      const waiting = f.situation === 'prelaunch' ? f.hasNextStage() && f.engineStatus() !== 'ok' : list.some((a) => a.id === 'stage');
+      $('btnStage').classList.toggle('ready', waiting);
+    }
+
     renderMessages() {
       const f = this.f;
       const t = f.realClock;
@@ -517,13 +529,16 @@
       const rows = [];
       const row = (k, v, cls) => rows.push(`<div class="t-row ${cls || ''}"><span>${k}</span><b>${v}</b></div>`);
       const bar = (frac, cls) => rows.push(`<div class="t-bar ${cls || ''}"><i style="width:${(Math.max(0, Math.min(1, frac)) * 100).toFixed(1)}%"></i></div>`);
+      // rows that an active alert is about are marked (amber for a caution, red for a warning)
+      const mark = {};
+      for (const a of f.alertList || []) if (!mark[a.id]) mark[a.id] = a.level === 'warning' ? 'bad' : 'warn';
       const alt = f.altitude();
       row('ALT', SB.Render.fmtAlt(alt));
       const radar = f.radarAltitude();
       if (radar < 20000 && f.situation !== 'crashed') row('RADAR', SB.Render.fmtAlt(Math.max(0, radar)), radar < 500 ? 'hot' : '');
       const vs = f.verticalSpeed(), hs = f.horizontalSpeed();
-      row('V.SPD', `${vs >= 0 ? '+' : '−'}${fmtSpeed(Math.abs(vs))} ${Math.abs(vs) < 0.05 ? '' : vs > 0 ? '↑' : '↓'}`);
-      row('H.SPD', `${fmtSpeed(Math.abs(hs))} ${Math.abs(hs) < 0.05 ? '' : hs > 0 ? '←' : '→'}`);
+      row('V.SPD', `${vs >= 0 ? '+' : '−'}${fmtSpeed(Math.abs(vs))} ${Math.abs(vs) < 0.05 ? '' : vs > 0 ? '↑' : '↓'}`, mark.sink);
+      row('H.SPD', `${fmtSpeed(Math.abs(hs))} ${Math.abs(hs) < 0.05 ? '' : hs > 0 ? '←' : '→'}`, mark.drift);
       row('SPEED', fmtSpeed(f.speed()));
       if (!f.isLanded() && f.situation !== 'crashed') {
         const el = f.orbit();
@@ -537,8 +552,12 @@
       bar(f.throttle, 'thr');
       const fuel = f.craft.activeStageFuel();
       const frac = fuel.max > 0 ? fuel.fuel / fuel.max : 0;
-      row(fuel.active ? 'STAGE FUEL' : 'NEXT STAGE FUEL', fuel.max > 0 ? `${Math.round(fuel.fuel).toLocaleString()} kg · ${Math.round(frac * 100)}%` : 'none', fuel.max > 0 && frac < 0.1 ? 'warn' : '');
-      bar(frac, frac < 0.1 ? 'low' : 'fuel');
+      const low = fuel.max > 0 && frac < SB.CONFIG.alerts.lowFuel;
+      const fuelText = fuel.max <= 0 ? 'none'
+        : fuel.fuel <= 1e-6 ? (f.hasNextStage() ? 'EMPTY · Space' : 'EMPTY')
+          : `${Math.round(fuel.fuel).toLocaleString()} kg · ${SB.Flight.pct(frac)}${low ? ' LOW' : ''}`;
+      row(fuel.active ? 'STAGE FUEL' : 'NEXT STAGE FUEL', fuelText, low ? 'warn' : '');
+      bar(frac, low ? 'low' : 'fuel');
       row('STAGE Δv', `${Math.round(f.craft.activeStageDv(f.pressureRatio())).toLocaleString()} m/s`);
       row('TWR', f.situation === 'crashed' ? '—' : f.twr().toFixed(2));
       row('MASS', `${Math.round(f.craft.mass()).toLocaleString()} kg`);
@@ -546,7 +565,8 @@
       if (radar < 3000 && !f.isLanded()) {
         const sf = this.app.sys.surfaceFrame(b, Math.atan2(f.st.ry, f.st.rx));
         const slope = Math.abs(sf.slope) * DEG;
-        row('GROUND', `slope ${slope.toFixed(0)}°`, slope > 25 ? 'warn' : '');
+        const steep = slope > SB.CONFIG.landing.maxSlopeDeg;
+        row('GROUND', `slope ${slope.toFixed(0)}°${steep ? ' · too steep' : ''}`, steep ? 'warn' : '');
       }
       row('GRAVITY', `${f.localGravity().toFixed(2)} m/s²`);
       $('telemetry').innerHTML = rows.join('');
