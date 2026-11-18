@@ -9,6 +9,7 @@ A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage 
 ## Highlights
 
 - **Hangar.** Snap parts into a stack, rearrange the staging, and see wet mass, liftoff thrust-to-weight and Δv for every stage. Save designs in your browser.
+- **Paint every part.** Pick a main and an accent colour, choose a pattern (bands, rings, V-2-style checker, split, racing stripe), or apply a whole-rocket livery. The paint is saved with the design and flies with it.
 - **Orbital mechanics.**
   - Inverse-square gravity, drag in a thin atmosphere, and three moons with their own spheres of influence (patched conics).
   - The physics doesn't depend on frame rate.
@@ -26,8 +27,8 @@ A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage 
 
 | | |
 | --- | --- |
-| ![Hangar with the starter rocket, its stats and staging](docs/screenshots/hangar.png) | ![Ignition on the launch pad](docs/screenshots/liftoff.png) |
-| **Hangar.** Build, stage, check Δv and TWR. | **Ignition.** The starter rocket on the pad. |
+| ![Hangar with the starter rocket painted in a checkered livery and the paint panel open](docs/screenshots/hangar.png) | ![Ignition on the launch pad](docs/screenshots/liftoff.png) |
+| **Hangar.** Build, paint, stage, check Δv and TWR. | **Ignition.** The starter rocket on the pad, in the Retro livery. |
 | ![In orbit above the home planet Verdis](docs/screenshots/orbit.jpg) | ![In orbit around Pock, seen on the map](docs/screenshots/lunar-orbit.jpg) |
 | **Orbit.** Above Verdis, with clouds and a terminator. | **Lunar orbit.** Captured around cratered Pock. |
 | ![Landed on Pock, with the touchdown report](docs/screenshots/landed.png) | ![The planet and three moons rendered as textured spheres](docs/screenshots/planets.jpg) |
@@ -55,15 +56,15 @@ The hangar opens with **Kestrel**, a ready-to-fly two-stage rocket: 2,910 kg, li
 You're now in an orbit of about 30 × 20 km, with a little booster fuel left.
 
 ### 2 · Fly to the inner moon, Pock
-1. Press **M** for the map and click **Pock** to target it.
-2. Click **Create transfer node**. The node panel shows the burn, how long it takes, and where it leads.
-3. Click **+.1** under Prograde until the panel shows **Pock encounter Pe 3–9 km**.
+1. Press **M** for the map and click **Pock** to target it. The map panel shows the phase angle and *transfer burn ≈ 170 m/s prograde in …*.
+2. Click your path roughly where you'll be at that moment. Then use the node panel's time buttons until **Node in** matches the countdown.
+3. Type the suggested Δv into **Prograde**. Fine-tune with **+.1** or **−.1** until the panel shows **Pock encounter Pe 3–9 km**.
 4. Click **Warp to burn**, then press **V** to hold the burn direction.
 5. When **Start burn** says **NOW**, press **Z**. Press **Space** when the booster runs dry.
 6. Ease off with **S** for the last few m/s, and press **X** near zero. The node clears itself.
 7. Warp toward the encounter. Warp backs off before Pock's sphere of influence.
 
-Prefer to fly it by hand? The map panel also shows the phase angle and "transfer burn ≈ 170 m/s prograde in …". Burn prograde then, and stop when the map shows the encounter.
+You can also skip the node: burn prograde when the countdown runs out, and stop when the map shows the encounter.
 
 ### 3 · Capture and land
 1. Inside Pock's sphere of influence, warp until periapsis is about 40 s away.
@@ -138,6 +139,7 @@ Everything tunable lives in [`js/config.js`](js/config.js):
 - the part catalogue and the preset rockets;
 - the warp levels and landing limits;
 - each body's texture colours and crater counts, and the sun direction;
+- the paint palette, each part role's default colours and patterns, and the liveries;
 - each engine's sound profile and the audio levels.
 
 ## Project layout
@@ -149,6 +151,7 @@ js/config.js        the editable configuration
 js/orbit.js         Kepler propagation, orbital elements
 js/system.js        bodies, moon orbits, spheres of influence, atmosphere, terrain
 js/craft.js         designs, staging, fuel sections, Δv/TWR analysis
+js/paint.js         part paint: colours, patterns, liveries
 js/coast.js         shared coasting with event detection, trajectory prediction
 js/maneuver.js      maneuver nodes, chained predictions, burn estimates
 js/sim.js           flight simulation, warp limiter, touchdown evaluation
@@ -169,7 +172,7 @@ docs/screenshots/   README images
 - [`tests/audio.html`](https://ognevoa.github.io/pocket-orbits/tests/audio.html) is a sound lab: hear each engine, play a launch sequence, and see the offline waveform checks.
 - `python3 tests/run_browser_tests.py all` runs everything in headless Chrome. That includes UI checks driven by real mouse and keyboard input: building and saving designs, flying with the keyboard, maneuver nodes, textures, sound, and a full mission inside the game page. It needs Python 3.9+ with `websockets` and Chrome or Chromium (set `CHROME=/path/to/chrome` to pick one).
 
-The scripted pilots in `tests/pilots.js` fly only with player controls: throttle, rotation, the attitude holds, staging and warp.
+The scripted pilots in `tests/pilots.js` fly only with player controls: throttle, rotation, the attitude holds, staging and warp. `python3 tests/capture_screenshots.py` uses them to regenerate the screenshots in `docs/screenshots/` from a real mission (it also needs Pillow).
 
 ## License
 

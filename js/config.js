@@ -178,6 +178,43 @@
       vacuumLevel: 0.4, // in vacuum only the muffled structure-borne rumble remains
     },
 
+    // Paint. Every part has a main colour, an accent colour and (pods and tanks) a pattern.
+    paint: {
+      palette: [
+        ['White', '#f2f0ea'], ['Silver', '#c9ced6'], ['Steel', '#8b939e'], ['Graphite', '#3a3f47'], ['Black', '#16181c'],
+        ['Orange', '#e8772e'], ['Red', '#c8352b'], ['Yellow', '#f1c232'], ['Gold', '#c9a227'], ['Copper', '#b87333'],
+        ['Olive', '#6b7b3a'], ['Green', '#2f8f5b'], ['Teal', '#2a9d9b'], ['Sky', '#4fa3e0'], ['Navy', '#24406e'],
+        ['Purple', '#6b4fa0'], ['Pink', '#d9668f'],
+      ],
+      // per part role: default colours, the pattern choices (first = default) and slot names
+      roles: {
+        pod: { base: '#cfd4dc', accent: '#6a4a32', patterns: ['plain', 'stripe', 'split', 'checker'], labels: ['Hull', 'Trim'] },
+        tank: { base: '#e8e4da', accent: '#cf6f2c', patterns: ['bands', 'plain', 'rings', 'checker', 'split', 'stripe'], labels: ['Body', 'Accent'] },
+        engine: { base: '#6f7680', accent: '#4c525b', patterns: [], labels: ['Housing', 'Nozzle'] },
+        decoupler: { base: '#f1c232', accent: '#23272e', patterns: [], labels: ['Stripes', 'Base'] },
+        legs: { base: '#5e6670', accent: '#aab2bd', patterns: [], labels: ['Ring', 'Legs'] },
+      },
+      // whole-rocket colour schemes (any role left out keeps its defaults)
+      liveries: [
+        { name: 'Classic', roles: {} },
+        { name: 'Midnight', roles: {
+          pod: { base: '#2a2e35', accent: '#c9a227', pattern: 'stripe' }, tank: { base: '#16181c', accent: '#c9a227', pattern: 'bands' },
+          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#c9a227', accent: '#16181c' }, legs: { base: '#3a3f47', accent: '#c9a227' } } },
+        { name: 'Retro', roles: {
+          pod: { base: '#f2f0ea', accent: '#16181c', pattern: 'split' }, tank: { base: '#f2f0ea', accent: '#16181c', pattern: 'checker' },
+          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#f2f0ea', accent: '#16181c' }, legs: { base: '#16181c', accent: '#c9ced6' } } },
+        { name: 'Arctic', roles: {
+          pod: { base: '#f2f0ea', accent: '#4fa3e0', pattern: 'plain' }, tank: { base: '#f2f0ea', accent: '#4fa3e0', pattern: 'rings' },
+          engine: { base: '#c9ced6', accent: '#8b939e' }, decoupler: { base: '#4fa3e0', accent: '#f2f0ea' }, legs: { base: '#c9ced6', accent: '#4fa3e0' } } },
+        { name: 'Racer', roles: {
+          pod: { base: '#c8352b', accent: '#f2f0ea', pattern: 'stripe' }, tank: { base: '#c8352b', accent: '#f2f0ea', pattern: 'stripe' },
+          engine: { base: '#16181c', accent: '#3a3f47' }, decoupler: { base: '#f2f0ea', accent: '#c8352b' }, legs: { base: '#16181c', accent: '#f2f0ea' } } },
+        { name: 'Copper', roles: {
+          pod: { base: '#b87333', accent: '#24406e', pattern: 'plain' }, tank: { base: '#b87333', accent: '#24406e', pattern: 'rings' },
+          engine: { base: '#8b939e', accent: '#b87333' }, decoupler: { base: '#24406e', accent: '#b87333' }, legs: { base: '#24406e', accent: '#b87333' } } },
+      ],
+    },
+
     storageKeys: {
       designs: 'pocketOrbits.designs.v1',
       current: 'pocketOrbits.current.v1',

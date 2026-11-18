@@ -206,8 +206,8 @@
   check('Plan transfer and capture as two nodes before leaving orbit, then fly both into Pock orbit', (d) => {
     const f = orbitAt(25000);
     f.setTarget(pock);
-    const n1 = f.planner.planTransfer(pock);
-    d(`"Create transfer node": ${n1.pro.toFixed(1)} m/s prograde in ${(n1.t - f.st.t).toFixed(0)} s`);
+    const n1 = P.addTransferNode(f, pock);
+    d(`Node placed from the map panel's hint: ${n1.pro.toFixed(1)} m/s prograde in ${(n1.t - f.st.t).toFixed(0)} s`);
     const inRange = (inf) => { const pe = P.layerPeAt(inf.layer, pock); return pe !== null && pe > 4000 && pe < 9000; };
     let t1 = P.tuneNode(f, n1, 'pro', 0.1, inRange, 150);
     if (!t1.ok) { f.planner.setComps(n1, f.transferInfo(pock).dv, 0); t1 = P.tuneNode(f, n1, 'pro', -0.1, inRange, 150); }
@@ -226,6 +226,29 @@
     const el = f.orbit();
     d(`Flew node 2 (warp crossed the SOI on the way): ${e2.burnTime.toFixed(1)} s, removed ${e2.removed}; ${f.situationText()} Ap ${km(el.ra - pock.radius)} Pe ${km(el.rp - pock.radius)}; fuel left ${f.craft.activeStageFuel().fuel.toFixed(0)} kg`);
     return t2.ok && e1.removed && e2.removed && f.situationText().startsWith('Orbiting Pock');
+  });
+
+  check('Paint: designs keep valid paint and drop bad values; flight parts and dropped stages carry it', (d) => {
+    const des = SB.Craft.makeDesign('paint', SB.CONFIG.presets[0].parts);
+    const idx = (t) => des.parts.findIndex((p) => p.type === t);
+    des.parts[idx('tank_s')].paint = { base: '#C8352B', accent: 'not-a-colour', pattern: 'checker' };
+    des.parts[idx('eng_hammer')].paint = { base: '#16181c', pattern: 'checker' }; // engines have no patterns
+    des.parts[idx('tank_m')].paint = { base: '#e8e4da', pattern: 'bands' }; // exactly the defaults
+    const clean = SB.Craft.sanitizeDesign(JSON.parse(JSON.stringify(des)));
+    const paintOf = (t) => (clean.parts.find((p) => p.type === t).paint || null);
+    d(`Sanitised: tank_s ${JSON.stringify(paintOf('tank_s'))}, hammer ${JSON.stringify(paintOf('eng_hammer'))}, tank_m ${JSON.stringify(paintOf('tank_m'))}`);
+    const r = SB.Paint.resolve('tank_s', paintOf('tank_s'));
+    d(`Resolved tank_s: ${JSON.stringify(r)}`);
+    const f = new SB.Flight(sys, clean);
+    const rr = planet.radius + 25000;
+    f.situation = 'flying'; f.st.rx = 0; f.st.ry = rr; f.st.vx = Math.sqrt(planet.mu / rr); f.st.vy = 0;
+    f.stage(); f.stage(); // ignite, then drop the booster
+    const deb = f.debris[0] && f.debris[0].craft.parts.find((p) => p.type === 'eng_hammer');
+    d(`In flight: upper tank paint ${JSON.stringify(f.craft.parts.find((p) => p.type === 'tank_s').paint)}; dropped Hammer paint ${JSON.stringify(deb && deb.paint)}`);
+    return JSON.stringify(paintOf('tank_s')) === JSON.stringify({ base: '#c8352b', pattern: 'checker' }) &&
+      JSON.stringify(paintOf('eng_hammer')) === JSON.stringify({ base: '#16181c' }) && paintOf('tank_m') === null &&
+      r.accent === SB.CONFIG.paint.roles.tank.accent && r.pattern === 'checker' &&
+      f.craft.parts.find((p) => p.type === 'tank_s').paint.base === '#c8352b' && deb && deb.paint.base === '#16181c';
   });
 
   // ---------------------------------------------------------------- mission: Pock

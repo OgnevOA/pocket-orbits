@@ -53,19 +53,57 @@
   }
   const outline = (ctx, s) => { ctx.strokeStyle = 'rgba(8,12,20,0.55)'; ctx.lineWidth = Math.max(0.6, s * 0.025); ctx.stroke(); };
 
-  function drawPod(ctx, d, x, y, s) {
+  /** Cylinder shading laid over flat paint: dark edges and a highlight left of centre. */
+  function cylShade(ctx, x0, x1, y, h) {
+    const g = ctx.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.45)');
+    g.addColorStop(0.28, 'rgba(255,255,255,0.22)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x0, y, x1 - x0, h);
+  }
+
+  /** Paints a pattern in the accent colour (the caller has clipped to the part). */
+  function paintPattern(ctx, pattern, x0, y, w, h, s, accent, heightM) {
+    ctx.fillStyle = accent;
+    switch (pattern) {
+      case 'bands': { const b = Math.min(0.1 * s, h * 0.14); ctx.fillRect(x0, y, w, b); ctx.fillRect(x0, y + h - b, w, b); break; }
+      case 'rings': {
+        const n = Math.max(2, Math.round(heightM / 0.5)), t = Math.max(1, Math.min(0.09 * s, (h / n) * 0.35));
+        for (let k = 0; k < n; k++) ctx.fillRect(x0, y + ((k + 0.5) * h) / n - t / 2, w, t);
+        break;
+      }
+      case 'checker': {
+        const rows = Math.max(2, Math.round(heightM / 0.62)), rh = h / rows;
+        for (let r = 0; r < rows; r++) ctx.fillRect(x0 + (r % 2 ? w / 2 : 0), y + r * rh, w / 2, rh);
+        break;
+      }
+      case 'split': ctx.fillRect(x0, y, w / 2, h); break;
+      case 'stripe': ctx.fillRect(x0 + w * 0.38, y, w * 0.24, h); break;
+      default: break;
+    }
+  }
+
+  function drawPod(ctx, d, x, y, s, pt) {
     const w = d.width * s, h = d.height * s, tw = w * 0.42;
-    ctx.beginPath();
-    ctx.moveTo(x - w / 2, y + h);
-    ctx.lineTo(x - tw / 2, y + h * 0.14);
-    ctx.quadraticCurveTo(x, y - h * 0.03, x + tw / 2, y + h * 0.14);
-    ctx.lineTo(x + w / 2, y + h);
-    ctx.closePath();
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#cfd4dc');
-    ctx.fill();
-    outline(ctx, s);
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#6a4a32');
+    const path = new Path2D();
+    path.moveTo(x - w / 2, y + h);
+    path.lineTo(x - tw / 2, y + h * 0.14);
+    path.quadraticCurveTo(x, y - h * 0.03, x + tw / 2, y + h * 0.14);
+    path.lineTo(x + w / 2, y + h);
+    path.closePath();
+    ctx.save();
+    ctx.clip(path);
+    ctx.fillStyle = pt.base;
+    ctx.fillRect(x - w / 2, y - h * 0.05, w, h * 1.05);
+    paintPattern(ctx, pt.pattern, x - w / 2, y - h * 0.05, w, h * 1.05, s, pt.accent, d.height);
+    ctx.fillStyle = pt.accent; // heat shield / trim
     ctx.fillRect(x - w / 2, y + h * 0.92, w, h * 0.08);
+    cylShade(ctx, x - w / 2, x + w / 2, y - h * 0.05, h * 1.05);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(8,12,20,0.55)'; ctx.lineWidth = Math.max(0.6, s * 0.025);
+    ctx.stroke(path);
     ctx.fillStyle = '#8c949f';
     ctx.fillRect(x - tw * 0.32, y - h * 0.01, tw * 0.64, h * 0.07);
     const ww = w * 0.2, wh = h * 0.2;
@@ -76,27 +114,28 @@
     ctx.fillRect(x - ww / 2 + w * 0.05 + ww * 0.18, y + h * 0.43, ww * 0.18, wh * 0.4);
   }
 
-  function drawTank(ctx, d, x, y, s) {
-    const w = d.width * s, h = d.height * s;
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#e8e4da');
-    ctx.fillRect(x - w / 2, y, w, h);
-    const band = Math.min(0.1 * s, h * 0.14);
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#cf6f2c');
-    ctx.fillRect(x - w / 2, y, w, band);
-    ctx.fillRect(x - w / 2, y + h - band, w, band);
+  function drawTank(ctx, d, x, y, s, pt) {
+    const w = d.width * s, h = d.height * s, x0 = x - w / 2;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, y, w, h); ctx.clip();
+    ctx.fillStyle = pt.base;
+    ctx.fillRect(x0, y, w, h);
+    paintPattern(ctx, pt.pattern, x0, y, w, h, s, pt.accent, d.height);
     ctx.strokeStyle = 'rgba(0,0,0,0.12)';
     ctx.lineWidth = Math.max(0.5, s * 0.02);
-    for (let k = 1; k < d.height; k++) { ctx.beginPath(); ctx.moveTo(x - w / 2, y + k * s); ctx.lineTo(x + w / 2, y + k * s); ctx.stroke(); }
-    ctx.beginPath(); ctx.rect(x - w / 2, y, w, h); outline(ctx, s);
+    for (let k = 1; k < d.height; k++) { ctx.beginPath(); ctx.moveTo(x0, y + k * s); ctx.lineTo(x0 + w, y + k * s); ctx.stroke(); }
+    cylShade(ctx, x0, x0 + w, y, h);
+    ctx.restore();
+    ctx.beginPath(); ctx.rect(x0, y, w, h); outline(ctx, s);
   }
 
-  function drawEngine(ctx, d, x, y, s) {
+  function drawEngine(ctx, d, x, y, s, pt) {
     const w = d.width * s, h = d.height * s, bell = d.bell * s;
     const mh = h * 0.36;
     ctx.beginPath();
     ctx.moveTo(x - w * 0.46, y); ctx.lineTo(x + w * 0.46, y);
     ctx.lineTo(x + bell * 0.24, y + mh); ctx.lineTo(x - bell * 0.24, y + mh); ctx.closePath();
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#6f7680');
+    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, pt.base);
     ctx.fill(); outline(ctx, s);
     ctx.beginPath();
     ctx.moveTo(x - bell * 0.2, y + mh);
@@ -104,18 +143,18 @@
     ctx.lineTo(x + bell / 2, y + h);
     ctx.quadraticCurveTo(x + bell * 0.24, y + h * 0.75, x + bell * 0.2, y + mh);
     ctx.closePath();
-    ctx.fillStyle = cylGrad(ctx, x - bell / 2, x + bell / 2, '#4c525b');
+    ctx.fillStyle = cylGrad(ctx, x - bell / 2, x + bell / 2, pt.accent);
     ctx.fill(); outline(ctx, s);
     ctx.fillStyle = '#c96a2a';
     ctx.fillRect(x - bell / 2, y + h - Math.max(1, s * 0.04), bell, Math.max(1, s * 0.04));
   }
 
-  function drawDecoupler(ctx, d, x, y, s) {
+  function drawDecoupler(ctx, d, x, y, s, pt) {
     const w = d.width * s, h = d.height * s;
     ctx.save();
     ctx.beginPath(); ctx.rect(x - w / 2, y, w, h); ctx.clip();
-    ctx.fillStyle = '#23272e'; ctx.fillRect(x - w / 2, y, w, h);
-    ctx.fillStyle = '#f1c232';
+    ctx.fillStyle = pt.accent; ctx.fillRect(x - w / 2, y, w, h);
+    ctx.fillStyle = pt.base;
     const step = Math.max(3, h * 1.4);
     for (let k = -h * 2; k < w + h * 2; k += step) {
       ctx.beginPath();
@@ -129,25 +168,26 @@
     ctx.beginPath(); ctx.rect(x - w / 2, y, w, h); outline(ctx, s);
   }
 
-  function drawLegRing(ctx, d, x, y, s) {
+  function drawLegRing(ctx, d, x, y, s, pt) {
     const w = d.width * s, h = d.height * s;
-    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#5e6670');
+    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, pt.base);
     ctx.fillRect(x - w * 0.49, y, w * 0.98, h);
     ctx.beginPath(); ctx.rect(x - w * 0.49, y, w * 0.98, h); outline(ctx, s);
     ctx.fillStyle = '#c9cfd8';
     for (const k of [-0.3, 0, 0.3]) { ctx.beginPath(); ctx.arc(x + k * w, y + h / 2, Math.max(0.6, s * 0.04), 0, TAU); ctx.fill(); }
   }
 
-  function drawLegStruts(ctx, d, x, yHip, yFoot, s) {
+  function drawLegStruts(ctx, d, x, yHip, yFoot, s, pt) {
     const w = d.width * s;
+    const col = (pt && pt.accent) || '#aab2bd';
     ctx.lineCap = 'round';
     for (const side of [-1, 1]) {
       const hx = x + side * w * 0.44, fx = x + side * (w / 2 + d.footSpread * s);
       const kx = x + side * (w / 2 + d.footSpread * s * 0.8), ky = yHip + (yFoot - yHip) * 0.35;
-      ctx.strokeStyle = '#3d434b';
+      ctx.strokeStyle = shade(col, -0.65);
       ctx.lineWidth = Math.max(1.5, s * 0.16);
       ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, yFoot); ctx.stroke();
-      ctx.strokeStyle = '#aab2bd';
+      ctx.strokeStyle = col;
       ctx.lineWidth = Math.max(0.8, s * 0.08);
       ctx.beginPath(); ctx.moveTo(hx, yHip); ctx.lineTo(kx, ky); ctx.lineTo(fx, yFoot); ctx.stroke();
       ctx.fillStyle = '#2d3238';
@@ -155,17 +195,21 @@
     }
   }
 
-  function drawPart(ctx, type, x, y, s) {
+  /** Draws one part with its top centre at (x, y), s px/m, in its paint (or the defaults). */
+  function drawPart(ctx, type, x, y, s, paint) {
     const d = SB.CONFIG.parts[type];
+    const pt = SB.Paint ? SB.Paint.resolve(type, paint) : { base: '#cccccc', accent: '#777777', pattern: null };
     switch (SB.Craft.role(type)) {
-      case 'pod': return drawPod(ctx, d, x, y, s);
-      case 'tank': return drawTank(ctx, d, x, y, s);
-      case 'engine': return drawEngine(ctx, d, x, y, s);
-      case 'decoupler': return drawDecoupler(ctx, d, x, y, s);
-      case 'legs': return drawLegRing(ctx, d, x, y, s);
+      case 'pod': return drawPod(ctx, d, x, y, s, pt);
+      case 'tank': return drawTank(ctx, d, x, y, s, pt);
+      case 'engine': return drawEngine(ctx, d, x, y, s, pt);
+      case 'decoupler': return drawDecoupler(ctx, d, x, y, s, pt);
+      case 'legs': return drawLegRing(ctx, d, x, y, s, pt);
       default: ctx.fillStyle = '#888'; ctx.fillRect(x - d.width * s / 2, y, d.width * s, d.height * s);
     }
   }
+
+  const strutPaint = (type, paint) => (SB.Paint ? SB.Paint.resolve(type, paint) : null);
 
   function drawFlame(ctx, x, y, bell, throttle, pr) {
     const vac = 1 - pr;
@@ -207,9 +251,9 @@
       }
     }
     for (const p of craft.parts) {
-      if (p.role === 'legs') drawLegStruts(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.5) * s, top + g.legReach.get(p.uid) * s, s);
+      if (p.role === 'legs') drawLegStruts(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.5) * s, top + g.legReach.get(p.uid) * s, s, strutPaint(p.type, p.paint));
     }
-    for (const p of craft.parts) drawPart(ctx, p.type, 0, top + g.tops.get(p.uid) * s, s);
+    for (const p of craft.parts) drawPart(ctx, p.type, 0, top + g.tops.get(p.uid) * s, s, p.paint);
     ctx.restore();
   }
 

@@ -239,17 +239,6 @@
       if (!inf || !inf.valid) return null;
       return inf.node.t - (inf.burn ? inf.burn.time / 2 : 0);
     }
-
-    /** Creates a Hohmann transfer node toward moon m from the current near-circular orbit. */
-    planTransfer(m) {
-      const info = this.f.transferInfo(m);
-      if (!info) return null;
-      // Too close to the ideal moment to start the burn on time? Use the next window.
-      const wait = info.wait < 60 ? info.wait + info.synodic : info.wait;
-      const node = this.add(this.f.st.t + wait, info.dv, 0);
-      this.compute();
-      return node;
-    }
   }
 
   SB.Planner = Planner;

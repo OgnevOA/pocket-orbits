@@ -289,6 +289,7 @@ async def run_ui(cdp, base, shots):
     stg = json.loads(stg)
     report("Reorder the staging sequence (move an engine to another step, then auto-stage)",
            stg["before"] != stg["mid"] and stg["after"] == stg["before"], json.dumps(stg))
+    await run_paint_ui(cdp, base, shots, report)
 
     # Launch the starter through the UI and fly a few seconds with keyboard input.
     await cdp.eval("document.querySelector('#btnStarter').click(); document.querySelector('#btnLaunch').click(); true")
@@ -357,9 +358,9 @@ async def run_ui(cdp, base, shots):
         await cdp.shot(os.path.join(shots, "map-system.png"))
     _ = land, crash
 
-    ok &= await run_maneuver_ui(cdp, shots, report)
-    ok &= await run_planet_textures(base, cdp, shots, report)
-    ok &= await run_audio(base, cdp, shots, report)
+    await run_maneuver_ui(cdp, shots, report)
+    await run_planet_textures(base, cdp, shots, report)
+    await run_audio(base, cdp, shots, report)
 
     # Full mission inside the real game page: the scripted pilot drives APP.flight (the same
     # Flight object the keyboard controls) from the pad to the surface of Pock.
@@ -488,6 +489,64 @@ async def run_audio(base, cdp, shots, report):
     return True
 
 
+async def run_paint_ui(cdp, base, shots, report):
+    """Paint parts in the hangar with real clicks; check the canvas pixels, saving, reloading and flight."""
+    await cdp.click_el("#btnStarter")
+    await asyncio.sleep(0.3)
+    part = json.loads(await cdp.eval("""(() => { const h = APP.hangar, p = h.design.parts.find(q => q.type === 'tank_m');
+        const r = h.rects.find(q => q.uid === p.uid), b = h.canvas.getBoundingClientRect();
+        return JSON.stringify({uid: p.uid, x: b.left + (r.x0 + r.x1) / 2, y: b.top + (r.y0 + r.y1) / 2}); })()"""))
+    await cdp.click(part["x"], part["y"])
+    await asyncio.sleep(0.3)
+    name = await cdp.eval("document.getElementById('paintSection').classList.contains('hidden') ? '' : document.getElementById('ppName').textContent")
+
+    def pixel(fx, fy):  # colour at a fraction of the selected tank's box on the stack canvas
+        return cdp.eval("""(() => { const h = APP.hangar, r = h.rects.find(q => q.uid === '%s'), p = h.design.parts.find(q => q.uid === '%s');
+            const w = SB.CONFIG.parts[p.type].width, s = (r.y1 - r.y0) / SB.CONFIG.parts[p.type].height, cx = (r.x0 + r.x1) / 2;
+            const x = cx + (%f - 0.5) * w * s, y = r.y0 + %f * (r.y1 - r.y0), d = devicePixelRatio || 1;
+            return Array.from(h.ctx.getImageData(Math.round(x * d), Math.round(y * d), 1, 1).data.slice(0, 3)); })()""" % (part["uid"], part["uid"], fx, fy))
+
+    before = await pixel(0.5, 0.5)
+    await cdp.click_el('#paintSection .swatches[data-slot="base"] .sw[data-color="#c8352b"]')
+    await asyncio.sleep(0.2)
+    red = await pixel(0.5, 0.5)
+    report("Paint: select a part, pick a colour, the stack canvas shows it",
+           name == "FT-200 Fuel Tank" and red[0] > red[1] + 60 and red[0] > red[2] + 60 and before[1] > 150,
+           f"panel for '{name}'; centre pixel {before} -> {red}")
+    await cdp.click_el('#paintSection .pat[data-pattern="checker"]')
+    await asyncio.sleep(0.2)
+    await cdp.eval("(() => { const i = document.querySelector('#paintSection input[data-slot=accent]'); i.value = '#2a9d9b'; i.dispatchEvent(new Event('input', {bubbles: true})); })(); true")
+    await asyncio.sleep(0.2)
+    left, right = await pixel(0.4, 0.25), await pixel(0.6, 0.25)  # checker: teal on one side, red on the other
+    await cdp.click_el("#ppSameRole")
+    await asyncio.sleep(0.2)
+    paints = json.loads(await cdp.eval("JSON.stringify(APP.hangar.design.parts.filter(p => p.type.startsWith('tank')).map(p => p.paint))"))
+    report("Paint: checker pattern, custom accent colour, 'every tank' copies it",
+           sum(abs(a - b) for a, b in zip(left, right)) > 120 and len(paints) == 2 and paints[0] == paints[1] == {"base": "#c8352b", "accent": "#2a9d9b", "pattern": "checker"},
+           f"checker pixels {left} vs {right}; tank paints {paints}")
+    await cdp.click_el('#paintSection [data-livery="Retro"]')
+    await asyncio.sleep(0.2)
+    liv = json.loads(await cdp.eval("JSON.stringify(APP.hangar.design.parts.map(p => [p.type, p.paint || null]))"))
+    if shots:
+        await cdp.shot(os.path.join(shots, "hangar-paint.png"))
+    await cdp.eval("(() => { const n = document.querySelector('#designName'); n.value = 'Painted'; n.dispatchEvent(new Event('input', {bubbles: true})); document.querySelector('#btnSave').click(); })(); true")
+    await cdp.goto(base + "/index.html")
+    await cdp.wait_for("!!window.APP && !!document.querySelector('#catalog .part-card')")
+    await cdp.eval("""(() => { const sel = document.querySelector('#designSelect'); sel.value = 's:Painted'; document.querySelector('#btnOpen').click(); })(); true""")
+    reloaded = json.loads(await cdp.eval("JSON.stringify(APP.hangar.design.parts.map(p => [p.type, p.paint || null]))"))
+    await cdp.click_el("#btnLaunch")
+    await cdp.wait_for("APP.screen === 'flight'")
+    flown = json.loads(await cdp.eval("JSON.stringify(APP.flight.craft.parts.map(p => [p.type, p.paint || null]))"))
+    report("Paint: a livery paints the whole rocket; it survives save, reload and launch",
+           all(p for _, p in liv) and liv == reloaded == flown and dict(liv)["tank_m"]["pattern"] == "checker",
+           f"Retro livery: {liv}")
+    if shots:
+        await asyncio.sleep(0.4)
+        await cdp.shot(os.path.join(shots, "flight-painted.png"))
+    await cdp.eval("APP.toHangar(); true")
+    return True
+
+
 async def run_maneuver_ui(cdp, shots, report):
     """Maneuver nodes through the real UI: mouse on the map, node panel, keyboard to fly the burn."""
     await cdp.eval("new Promise(r => { if (window.Pilots) return r(true); const s = document.createElement('script'); s.src = 'tests/pilots.js'; s.onload = () => r(true); document.body.appendChild(s); })")
@@ -557,17 +616,43 @@ async def run_maneuver_ui(cdp, shots, report):
     zero = await cdp.eval("APP.flight.planner.count")
     report("Maneuver: Delete key and the Delete button remove nodes", one == 1 and zero == 0, f"after Delete key: {one}, after button: {zero}")
 
-    # Transfer to Pock with "Create transfer node", fine-tuned like clicking +0.1, then flown live.
+    # Transfer to Pock placed by hand (there is no "create transfer node" shortcut): target Pock, click the
+    # path where the craft will be when the panel's countdown runs out, line the node up with the time
+    # buttons, type the suggested delta-v, fine-tune like clicking +0.1, then fly it live.
     await cdp.click_el('#mapPanel [data-target="pock"]')
     await asyncio.sleep(0.5)
-    await cdp.click_el('#mapPanel [data-act="plan-transfer"]')
-    await asyncio.sleep(0.5)
+    gone = await cdp.eval("!document.querySelector('[data-act=\"plan-transfer\"]') && !document.body.innerText.includes('Create transfer node')")
+    await cdp.eval("""(() => { const f = APP.flight, pock = APP.sys.byId('pock'), T = f.orbit().period;
+        Pilots.coastUntil(f, (ff) => { const w = ff.transferInfo(pock).wait; return w > 150 && w < T - 150; }, 10);
+        f.maybePredict(true); APP.mapView.fitOrbit(); return true; })()""")
+    await asyncio.sleep(0.6)
+    pt = json.loads(await cdp.eval("""(() => { const f = APP.flight, pock = APP.sys.byId('pock'), cv = document.getElementById('view');
+        const tb = f.st.t + f.transferInfo(pock).wait; let best = null;
+        for (const p of APP.mapView.pick.filter(q => q.layer === 0)) for (let k = 0; k < p.ts.length; k++) {
+          const d = Math.abs(p.ts[k] - tb);
+          if ((!best || d < best.d) && document.elementFromPoint(p.xs[k], p.ys[k]) === cv) best = {x: p.xs[k], y: p.ys[k], d};
+        }
+        return JSON.stringify(best); })()"""))
+    await cdp.click(pt["x"], pt["y"])
+    await asyncio.sleep(0.4)
+    offset = "(() => { const f = APP.flight; return f.st.t + f.transferInfo(APP.sys.byId('pock')).wait - f.planner.nodes[0].t; })()"
+    for _ in range(60):  # the node panel's time buttons, like a player matching "Node in" to the countdown
+        dt = await cdp.eval(offset)
+        if abs(dt) < 1.5:
+            break
+        step = "60" if abs(dt) >= 45 else "10" if abs(dt) >= 7 else "1"
+        await cdp.click_el(f'#nodePanel [data-dt="{"" if dt > 0 else "-"}{step}"]')
+        await asyncio.sleep(0.05)
+    dv = await cdp.eval("APP.flight.transferInfo(APP.sys.byId('pock')).dv.toFixed(1)")
+    await cdp.eval("(() => { const i = document.querySelector('#nodePanel [data-input=pro]'); i.focus(); i.value = '%s'; i.dispatchEvent(new Event('change', {bubbles: true})); })(); true" % dv)
+    await asyncio.sleep(0.4)
     tune = json.loads(await cdp.eval("""(() => { const f = APP.flight, pock = APP.sys.byId('pock'), n = f.planner.nodes[0];
         const ok = (inf) => { const pe = Pilots.layerPeAt(inf.layer, pock); return pe !== null && pe > 4000 && pe < 9000; };
         let r = Pilots.tuneNode(f, n, 'pro', 0.1, ok, 150);
         if (!r.ok) { f.planner.setComps(n, f.transferInfo(pock).dv, 0); r = Pilots.tuneNode(f, n, 'pro', -0.1, ok, 150); }
         return JSON.stringify({ok: r.ok, pro: n.pro, pe: Pilots.layerPeAt(f.planner.info(n).layer, pock), wait: n.t - f.st.t}); })()"""))
-    report("Maneuver: 'Create transfer node' + fine tuning gives a planned Pock encounter", tune["ok"], json.dumps(tune))
+    report("Maneuver: no transfer shortcut; a hand-placed node at the hinted time, fine-tuned, gives a planned Pock encounter",
+           gone and tune["ok"], f"button gone={gone}; clicked {pt['d']:.0f} s from the hint, matched with the time buttons; typed {dv} m/s; " + json.dumps(tune))
     await asyncio.sleep(0.6)
     if shots:
         await cdp.shot(os.path.join(shots, "nodes-transfer-plan.png"))

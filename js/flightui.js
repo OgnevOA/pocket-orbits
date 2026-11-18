@@ -127,10 +127,6 @@
         if (b.dataset.target !== undefined) this.f.setTarget(b.dataset.target ? this.app.sys.byId(b.dataset.target) : null);
         if (b.dataset.focus !== undefined) { this.app.mapView.setFocus(b.dataset.focus); }
         if (b.dataset.fit) { b.dataset.fit === 'orbit' ? this.app.mapView.fitOrbit() : this.app.mapView.fitSystem(); }
-        if (b.dataset.act === 'plan-transfer' && this.f.target) {
-          const n = this.f.planner.planTransfer(this.f.target);
-          if (n) { this.f.msg(`Transfer node to ${this.f.target.name} added: fine-tune it on the map`, 'good', 'node'); this.app.mapView.fitOrbit(); }
-        }
         this.lastMap = -1;
       });
 
@@ -573,7 +569,7 @@
 
     buildMapPanel() {
       $('mapPanel').innerHTML = `<div id="mpOrbit"></div>
-        <h4>Target</h4><div id="mpTargetBtns" class="btnrow"></div><div id="mpTargetInfo"></div><div id="mpTransfer"></div>
+        <h4>Target</h4><div id="mpTargetBtns" class="btnrow"></div><div id="mpTargetInfo"></div>
         <h4>View</h4><div id="mpView"></div>
         <p class="note">Wheel or +/− zoom · drag to pan · click a moon to target it · click your path to add a maneuver · Tab cycles focus</p>`;
     }
@@ -603,17 +599,14 @@
       tb += `<button data-target="" class="${!f.target ? 'active' : ''}">None</button>`;
       set('mpTargetBtns', tb);
 
-      let ti = '', tr = '';
+      let ti = '';
       if (f.target) {
         const info = f.transferInfo(f.target);
         const circular = !f.isLanded() && f.situation !== 'crashed' && f.orbit().e < 0.15;
         const hasEnc = f.prediction && f.prediction.events.some((e) => e.type === 'soi' && e.to === f.target);
         if (info) {
           ti += kv('Phase angle', `${(info.phase * DEG).toFixed(1)}° <small>ideal ${(info.ideal * DEG).toFixed(1)}°</small>`);
-          if (circular && !hasEnc) {
-            ti += kv('Transfer burn', `${info.dv.toFixed(0)} m/s prograde in ${D(info.wait)}`);
-            if (!f.planner.count) tr = '<div class="btnrow"><button data-act="plan-transfer" class="primary-soft">Create transfer node</button></div>';
-          }
+          if (circular && !hasEnc) ti += kv('Transfer burn', `${info.dv.toFixed(0)} m/s prograde in ${D(info.wait)}`);
           if (!info.sameSense) ti += '<p class="note warn">You orbit opposite to the moons: transfers cost far more.</p>';
         }
         const plan = f.planner.plan;
@@ -625,7 +618,6 @@
         } else if (f.body === f.target) ti += '<p class="note">You are inside its sphere of influence.</p>';
       }
       set('mpTargetInfo', ti);
-      set('mpTransfer', tr);
 
       let vb = '<div class="btnrow">';
       const foc = [['auto', 'Auto'], ['craft', 'Craft']].concat(sys.bodies.map((x) => [x.id, x.name]));

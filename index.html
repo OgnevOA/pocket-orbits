@@ -38,9 +38,10 @@
           <button data-act="down" title="Move down (Alt+↓)">▼ Down</button>
           <button data-act="remove" class="danger" title="Remove (Delete)">✕ Remove</button>
         </div>
-        <div class="assembly-hint">Drag parts to snap them into the stack · drag a part off the stack to remove it · click to select</div>
+        <div class="assembly-hint">Drag parts to snap them into the stack · drag a part off the stack to remove it · click a part to select and paint it</div>
       </main>
       <aside id="info" class="panel scroll">
+        <section id="paintSection" class="hidden"></section>
         <section><h2>Vehicle</h2><div id="stats"></div></section>
         <section><h2>Staging <button id="btnAutoStage" class="small ghost" title="Restore the default staging order">Auto</button></h2>
           <p class="note">Stage 1 fires at launch; each Space press fires the next step.</p>
@@ -151,7 +152,9 @@
           Or use the node panel's buttons (hold to repeat) and type exact values.</li>
         <li>Drag the node itself along the path, or use the time buttons (±1 s … ± one orbit), to move it in time.</li>
         <li>Click the planned (dashed) path to chain another node, e.g. plan the capture at the moon before leaving.</li>
-        <li>With a moon targeted, <b>Create transfer node</b> places a Hohmann burn at the next good moment.</li>
+        <li>To reach a moon, target it: the map panel shows the phase angle and when to burn. Click your path where you will be
+          at that moment (the node panel's “Node in” tells you), give the node about the suggested prograde Δv, then fine-tune
+          until the dashed path shows the encounter.</li>
         <li>To fly it: <b>Warp to burn</b> (warp stops 10 s before the burn starts), press <kbd>V</kbd> to hold the burn direction
           (blue marker on the dial), and throttle up when “Start burn” says NOW. Remaining Δv counts down; cut the throttle
           near zero and the node removes itself.</li>
@@ -195,6 +198,7 @@
 <script src="js/system.js"></script>
 <script src="js/planets.js"></script>
 <script src="js/craft.js"></script>
+<script src="js/paint.js"></script>
 <script src="js/coast.js"></script>
 <script src="js/maneuver.js"></script>
 <script src="js/sim.js"></script>

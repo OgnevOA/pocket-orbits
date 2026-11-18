@@ -86,7 +86,12 @@
   /** Validates/repairs a design loaded from storage. Returns null if unusable. */
   function sanitizeDesign(d) {
     if (!d || !Array.isArray(d.parts)) return null;
-    const parts = d.parts.filter((p) => p && def(p.type)).map((p) => ({ uid: String(p.uid || newUid()), type: p.type }));
+    const parts = d.parts.filter((p) => p && def(p.type)).map((p) => {
+      const part = { uid: String(p.uid || newUid()), type: p.type };
+      const paint = SB.Paint ? SB.Paint.sanitize(p.type, p.paint) : null;
+      if (paint) part.paint = paint;
+      return part;
+    });
     const seen = new Set();
     parts.forEach((p) => { if (seen.has(p.uid)) p.uid = newUid(); seen.add(p.uid); });
     const custom = !!d.customStaging;
@@ -98,7 +103,7 @@
     constructor(parts, stages) {
       this.parts = parts.map((p) => {
         const d = def(p.type);
-        return { uid: p.uid, type: p.type, def: d, role: role(p.type), fuel: p.fuel !== undefined ? p.fuel : d.fuel || 0, fuelMax: d.fuel || 0 };
+        return { uid: p.uid, type: p.type, def: d, role: role(p.type), fuel: p.fuel !== undefined ? p.fuel : d.fuel || 0, fuelMax: d.fuel || 0, paint: p.paint || null };
       });
       this.stages = (stages || []).map((s) => s.slice());
       this.nextStage = 0;

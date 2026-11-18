@@ -231,6 +231,22 @@
     }, { maxSim: 20000 });
   }
 
+  /**
+   * What a player does with the map panel's hint ("transfer burn X m/s prograde in T"): put a node at
+   * that moment with that delta-v. If the moment is too close, wait for the next window first.
+   */
+  function addTransferNode(f, m) {
+    f.setTarget(m);
+    let info = f.transferInfo(m);
+    if (info.wait < 60) {
+      coastUntil(f, (ff) => ff.transferInfo(m).wait > 120, 10);
+      info = f.transferInfo(m);
+    }
+    const node = f.planner.add(f.st.t + info.wait, info.dv, 0);
+    f.planner.compute();
+    return node;
+  }
+
   /** Waits (warping) for the ideal phase angle, then burns prograde until the predicted moon periapsis is 3–9 km. */
   function transfer(f, m) {
     f.setTarget(m);
@@ -345,5 +361,5 @@
     return { ok: res.ok, maxWarp, warpAt10, remaining: rem, removed: !pl.nodes.includes(node), burnTime: startT !== null ? f.st.t - startT : 0 };
   }
 
-  root.Pilots = { tiltRight, warpIndexFor, fly, ascend, burn, coastUntil, encounterWith, predictedPeAlt, land, transfer, warpToSoi, capture, deorbit, tuneNode, layerPeAt, executeNode };
+  root.Pilots = { tiltRight, warpIndexFor, fly, ascend, burn, coastUntil, encounterWith, predictedPeAlt, land, transfer, warpToSoi, capture, deorbit, tuneNode, layerPeAt, executeNode, addTransferNode };
 })(typeof window !== 'undefined' ? window : globalThis);

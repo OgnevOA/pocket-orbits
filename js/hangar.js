@@ -37,6 +37,7 @@
       this.rects = [];
       this.analysis = null;
       this.buildCatalog();
+      this.buildPaintPanel();
       this.bindUi();
       const cur = SB.Craft.sanitizeDesign(store.read(C().storageKeys.current, null));
       this.setDesign(cur && cur.parts.length ? cur : this.preset(0), { keepSelection: false });
@@ -70,9 +71,120 @@
         index = si >= 0 ? si + 1 : parts.length;
       }
       const p = { uid: SB.Craft.newUid(), type };
+      const twin = parts.find((q) => q.type === type) || parts.find((q) => SB.Craft.role(q.type) === SB.Craft.role(type));
+      if (twin && twin.paint) p.paint = Object.assign({}, twin.paint);
       parts.splice(index, 0, p);
       this.selected = p.uid;
       this.changed();
+    }
+
+    // Paint ----------------------------------------------------------
+    setPaint(uid, patch) {
+      const p = this.design.parts.find((q) => q.uid === uid);
+      if (!p) return;
+      const next = SB.Paint.sanitize(p.type, Object.assign({}, SB.Paint.resolve(p.type, p.paint), patch));
+      if (next) p.paint = next; else delete p.paint;
+      this.changed(false);
+    }
+
+    /** Copies the selected part's paint to every part of the same type ('type') or role ('role'). */
+    copyPaint(uid, scope) {
+      const src = this.design.parts.find((q) => q.uid === uid);
+      if (!src) return;
+      const role = SB.Craft.role(src.type);
+      let n = 0;
+      for (const q of this.design.parts) {
+        if (q === src || (scope === 'type' ? q.type !== src.type : SB.Craft.role(q.type) !== role)) continue;
+        // same role but another type: carry the colours and the pattern where it applies
+        const next = SB.Paint.sanitize(q.type, SB.Paint.resolve(src.type, src.paint));
+        if (next) q.paint = next; else delete q.paint;
+        n++;
+      }
+      this.changed(false);
+      this.toast(n ? `Painted ${n} more part${n > 1 ? 's' : ''}` : 'No other matching parts');
+    }
+
+    applyLivery(name) {
+      const livery = SB.Paint.liveries().find((l) => l.name === name);
+      if (!livery) return;
+      for (const q of this.design.parts) {
+        const next = SB.Paint.liveryPaint(livery, q.type);
+        if (next) q.paint = next; else delete q.paint;
+      }
+      this.changed(false);
+      this.toast(`Livery: ${name}`);
+    }
+
+    buildPaintPanel() {
+      const el = document.getElementById('paintSection');
+      const swatches = SB.Paint.palette().map(([name, c]) => `<button class="sw" data-color="${c}" title="${esc(name)}" style="--c:${c}" aria-label="${esc(name)}"></button>`).join('');
+      el.innerHTML = `
+        <h2><span>Paint · <span id="ppName"></span></span><button id="ppReset" class="small ghost" title="Back to the default colours">Reset</button></h2>
+        <div class="pp-row"><span class="pp-lbl" id="ppLbl0">Main</span><div class="swatches" data-slot="base">${swatches}</div>
+          <input type="color" data-slot="base" title="Custom colour" aria-label="Custom main colour"></div>
+        <div class="pp-row"><span class="pp-lbl" id="ppLbl1">Accent</span><div class="swatches" data-slot="accent">${swatches}</div>
+          <input type="color" data-slot="accent" title="Custom colour" aria-label="Custom accent colour"></div>
+        <div class="pp-row stacked" id="ppPatternRow"><span class="pp-lbl">Pattern</span><div id="ppPatterns" class="pp-patterns"></div></div>
+        <div class="pp-row pp-apply"><button id="ppSameType"></button><button id="ppSameRole"></button></div>
+        <div class="pp-row"><span class="pp-lbl">Livery</span><div id="ppLiveries" class="pp-liveries">${SB.Paint.liveries().map((l) => {
+          const t = Object.assign({ base: '#e8e4da', accent: '#cf6f2c' }, (l.roles || {}).tank || {});
+          return `<button data-livery="${esc(l.name)}" title="Paint the whole rocket"><i style="background:linear-gradient(90deg, ${t.base} 50%, ${t.accent} 50%)"></i>${esc(l.name)}</button>`;
+        }).join('')}</div></div>`;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b || !this.selected) return;
+        if (b.dataset.color) this.setPaint(this.selected, { [b.closest('[data-slot]').dataset.slot]: b.dataset.color });
+        else if (b.dataset.pattern) this.setPaint(this.selected, { pattern: b.dataset.pattern });
+        else if (b.dataset.livery) this.applyLivery(b.dataset.livery);
+        else if (b.id === 'ppSameType') this.copyPaint(this.selected, 'type');
+        else if (b.id === 'ppSameRole') this.copyPaint(this.selected, 'role');
+        else if (b.id === 'ppReset') {
+          const p = this.design.parts.find((q) => q.uid === this.selected);
+          if (p) { delete p.paint; this.changed(false); }
+        }
+      });
+      el.addEventListener('input', (e) => {
+        const inp = e.target.closest('input[type=color]');
+        if (inp && this.selected) this.setPaint(this.selected, { [inp.dataset.slot]: inp.value });
+      });
+    }
+
+    renderPaint() {
+      const el = document.getElementById('paintSection');
+      const p = this.selected && this.design.parts.find((q) => q.uid === this.selected);
+      el.classList.toggle('hidden', !p);
+      if (!p) return;
+      const d = C().parts[p.type], role = SB.Craft.role(p.type);
+      const pt = SB.Paint.resolve(p.type, p.paint);
+      const [l0, l1] = SB.Paint.labels(p.type);
+      document.getElementById('ppName').textContent = d.name;
+      document.getElementById('ppLbl0').textContent = l0;
+      document.getElementById('ppLbl1').textContent = l1;
+      for (const slot of ['base', 'accent']) {
+        el.querySelectorAll(`.swatches[data-slot="${slot}"] .sw`).forEach((b) => b.classList.toggle('active', b.dataset.color.toLowerCase() === pt[slot]));
+        const inp = el.querySelector(`input[data-slot="${slot}"]`);
+        if (document.activeElement !== inp) inp.value = pt[slot];
+      }
+      const pats = SB.Paint.patterns(p.type);
+      document.getElementById('ppPatternRow').classList.toggle('hidden', !pats.length);
+      const box = document.getElementById('ppPatterns');
+      const key = p.type + '|' + pt.base + '|' + pt.accent;
+      if (box._key !== key) {
+        box._key = key;
+        box.innerHTML = pats.map((n) => `<button class="pat" data-pattern="${n}" title="${SB.Paint.PATTERN_NAMES[n]}"><canvas width="44" height="60"></canvas><span>${SB.Paint.PATTERN_NAMES[n]}</span></button>`).join('');
+        box.querySelectorAll('.pat').forEach((b) => {
+          const cv = b.querySelector('canvas'), cx = cv.getContext('2d');
+          const s = Math.min((cv.width - 6) / d.width, (cv.height - 6) / d.height);
+          SB.Render.drawPart(cx, p.type, cv.width / 2, (cv.height - d.height * s) / 2, s, { base: pt.base, accent: pt.accent, pattern: b.dataset.pattern });
+        });
+      }
+      box.querySelectorAll('.pat').forEach((b) => b.classList.toggle('active', b.dataset.pattern === pt.pattern));
+      const roleName = { pod: 'pod', tank: 'tank', engine: 'engine', decoupler: 'decoupler', legs: 'leg ring' }[role] || 'part';
+      const sameType = this.design.parts.filter((q) => q.type === p.type).length;
+      const sameRole = this.design.parts.filter((q) => SB.Craft.role(q.type) === role).length;
+      const bt = document.getElementById('ppSameType'), br = document.getElementById('ppSameRole');
+      bt.textContent = `Every ${d.name}`; bt.disabled = sameType < 2;
+      br.textContent = `Every ${roleName}`; br.disabled = sameRole < 2 || sameRole === sameType;
     }
 
     movePart(uid, index) {
@@ -248,7 +360,7 @@
       const wTot = d.width + (isLegs ? d.footSpread * 2 : 0);
       const s = Math.min((cv.width - 16) / wTot, (cv.height - 16) / hTot, 60);
       const y = (cv.height - hTot * s) / 2;
-      if (isLegs) SB.Render.drawLegStruts(ctx, d, cv.width / 2, y + d.height * s * 0.5, y + hTot * s, s);
+      if (isLegs) SB.Render.drawLegStruts(ctx, d, cv.width / 2, y + d.height * s * 0.5, y + hTot * s, s, SB.Paint.resolve(type));
       SB.Render.drawPart(ctx, type, cv.width / 2, y, s);
     }
 
@@ -422,12 +534,12 @@
       // legs first (behind the stack)
       for (const p of craft.parts) {
         if (p.role !== 'legs') continue;
-        SB.Render.drawLegStruts(ctx, p.def, x, y0 + (g.tops.get(p.uid) + p.def.height / 2) * s, y0 + g.legReach.get(p.uid) * s, s);
+        SB.Render.drawLegStruts(ctx, p.def, x, y0 + (g.tops.get(p.uid) + p.def.height / 2) * s, y0 + g.legReach.get(p.uid) * s, s, SB.Paint.resolve(p.type, p.paint));
       }
       craft.parts.forEach((p, i) => {
         const top = y0 + g.tops.get(p.uid) * s, h = p.def.height * s;
         const w = Math.max(p.def.width, p.def.bell || 0) * s;
-        SB.Render.drawPart(ctx, p.type, x, top, s);
+        SB.Render.drawPart(ctx, p.type, x, top, s, p.paint);
         const rect = { uid: p.uid, i, y0: top, y1: top + h, x0: x - Math.max(w / 2, 30) - 12, x1: x + Math.max(w / 2, 30) + 12 };
         this.rects.push(rect);
         const sel = p.uid === this.selected, hov = p.uid === this.hover || p.uid === this.highlight;
@@ -535,6 +647,7 @@
       document.getElementById('staging').innerHTML = sh;
 
       document.getElementById('warnings').innerHTML = a.warnings.map((w) => `<div class="warn-${w.level}">${esc(w.text)}</div>`).join('');
+      this.renderPaint();
     }
 
     typeOf(uid) { const p = this.design.parts.find((q) => q.uid === uid); return p ? p.type : 'decoupler'; }
