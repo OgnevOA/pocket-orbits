@@ -111,6 +111,31 @@ async def capture(only):
             await cdp.eval("APP.flight.paused = true; true")
             await shot("landed", 0.6)
 
+            # parachutes: the Kestrel Return's upper stage (fuel mostly spent) under its three mains above Verdis
+            if want("chutes"):
+                await cdp.eval("""(() => { APP.toHangar(); const h = APP.hangar, i = SB.CONFIG.presets.findIndex(p => /parachute/i.test(p.name));
+                    h.setDesign(h.preset(i)); h.selected = null; h.render(); document.querySelector('#btnLaunch').click();
+                    const f = APP.flight, P = APP.sys.planet;
+                    f.stage(); f.situation = 'flying'; f.stage(); f.setThrottle(0); f.launchTime = f.st.t - 5523;
+                    for (const p of f.craft.parts) if (p.role === 'tank') p.fuel = p.fuelMax * 0.15;
+                    const a = P.launchAngle + 0.05, R = APP.sys.surfaceRadius(P, a) + f.geometry().bottomOffset + 2650;
+                    f.st.rx = Math.cos(a) * R; f.st.ry = Math.sin(a) * R; f.st.vx = -Math.cos(a) * 60; f.st.vy = -Math.sin(a) * 60;
+                    f.heading = a; f.stage(); APP.setView('flight'); APP.flightView.zoom = 9; return true; })()""")
+                await asyncio.sleep(7.5)
+                await cdp.eval("APP.flight.paused = true; true")
+                await shot("chutes", 0.5)
+
+            # a sink-rate warning: falling at Pock faster than full thrust can stop in the height left
+            if want("warning"):
+                await cdp.eval("""(() => { APP.debugScenario('landed'); const f = APP.flight; f.outcome = null; f.launchTime = f.st.t - 3900;
+                    const c = f.craft, accel = c.thrustState(1, 0).thrust / c.mass() - f.localGravity();
+                    const L = f.landingLimits().maxDescent, v = 40, h = (v * v - L * L) / (2 * accel) / 1.3 + 60;
+                    const n = Math.hypot(f.st.rx, f.st.ry), u = [f.st.rx / n, f.st.ry / n];
+                    f.st.rx += u[0] * h; f.st.ry += u[1] * h; f.st.vx = -u[0] * v - u[1] * 1.5; f.st.vy = -u[1] * v + u[0] * 1.5;
+                    f.situation = 'flying'; f.setThrottle(0); f.setSas('stability', true); APP.setView('flight'); APP.flightView.zoom = 2.5; return true; })()""")
+                await asyncio.sleep(1.2)
+                await shot("warning", 0.3)
+
             if want("planets"):
                 await cdp.goto(base + "/tests/planets.html")
                 await cdp.wait_for("!!window.PLANET_CHECK", timeout=60)

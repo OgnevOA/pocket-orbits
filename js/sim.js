@@ -10,6 +10,31 @@
   const approach = (x, target, step) => (x < target ? Math.min(target, x + step) : Math.max(target, x - step));
   const DEG = 180 / Math.PI;
 
+  /**
+   * One step of a parachute pack's opening sequence; shared by flight and the touchdown estimate.
+   * k: {air, falling, radar, speed}. Armed packs open their drogues once falling in air below the
+   * drogue height and speed limits; the mains follow below theirs, and the drogues are cut away.
+   * Open fractions grow with the square of time (a canopy fills slowly at first). Returns the event.
+   */
+  function advanceChute(c, D, dt, k) {
+    let ev = null;
+    if (c.stage === 'armed' && k.air && k.falling && k.radar < D.drogue.maxRadar && k.speed < D.drogue.maxSpeed) { c.stage = 'drogue'; c.t = 0; ev = 'drogue'; }
+    if (c.stage === 'drogue' && k.radar < D.main.maxRadar && k.speed < D.main.maxSpeed) { c.stage = 'main'; c.t = 0; c.dc = c.drogue; ev = 'main'; }
+    if (c.stage === 'drogue') {
+      c.t += dt;
+      c.drogue = Math.min(1, c.t / D.drogue.openTime) ** 2;
+    } else if (c.stage === 'main') {
+      c.t += dt;
+      c.drogue = 0;
+      for (let i = 0; i < c.main.length; i++) c.main[i] = clamp((c.t - i * D.main.stagger) / D.main.openTime, 0, 1) ** 2;
+    }
+    return ev;
+  }
+  const mainFraction = (c) => c.main.reduce((a, b) => a + b, 0) / c.main.length;
+  /** Drag area (m^2) a pack adds right now. */
+  const chuteArea = (c, D) => D.drogue.cdA * c.drogue + D.main.cdA * mainFraction(c);
+  const chuteLive = (c) => c.stage === 'armed' || c.stage === 'drogue' || c.stage === 'main';
+
   class Flight {
     constructor(sys, design) {
       this.sys = sys;
@@ -43,6 +68,8 @@
       this.maxAlt = 0;
       this.alertList = [];
       this.lastEngine = 'none';
+      this.chuteLog = [];
+      this._chuteEst = null;
       this.landedBody = sys.planet;
       this.landedAngle = sys.planet.launchAngle;
       this.placeOnSurface(sys.planet, sys.planet.launchAngle);
@@ -110,7 +137,92 @@
       return lit ? 'dry' : 'none';
     }
     hasNextStage() { return this.craft.nextStage < this.craft.stages.length; }
-    landingLimits() { return this.geometry().legsAtBottom ? this.cfg.landing.withLegs : this.cfg.landing.withoutLegs; }
+    /** True when the next stage only arms parachutes (so "press Space" means "arm the chutes"). */
+    nextStageIsChutes() {
+      if (!this.hasNextStage()) return false;
+      const step = this.craft.stages[this.craft.nextStage].map((uid) => this.craft.find(uid)).filter(Boolean);
+      return step.length > 0 && step.every((p) => p.role === 'chute');
+    }
+
+    /**
+     * Touchdown limits: legs or none, made more lenient (field by field) while hanging from the main
+     * chutes, or with assumeMains, for judging a descent that the mains will finish.
+     */
+    landingLimits(assumeMains) {
+      const L = this.cfg.landing;
+      const base = this.geometry().legsAtBottom ? L.withLegs : L.withoutLegs;
+      if (!assumeMains && this.mainsFraction() <= 0.5) return base;
+      const u = L.underChutes;
+      return { maxDescent: Math.max(base.maxDescent, u.maxDescent), maxHorizontal: Math.max(base.maxHorizontal, u.maxHorizontal), maxTiltDeg: Math.max(base.maxTiltDeg, u.maxTiltDeg) };
+    }
+
+    // ------------------------------------------------------------------ parachutes
+    chutePacks() { return this.craft.parts.filter((p) => p.role === 'chute'); }
+    /** Extra drag area (m^2) of every open canopy. */
+    chuteCdA() { let a = 0; for (const p of this.craft.parts) if (p.role === 'chute') a += chuteArea(p.chute, p.def); return a; }
+    /** How far the main canopies are open, 0..1 (the most open pack). */
+    mainsFraction() { let f = 0; for (const p of this.craft.parts) if (p.role === 'chute' && p.chute.stage === 'main') f = Math.max(f, mainFraction(p.chute)); return f; }
+    mainsOpen() { return this.mainsFraction() >= 0.999; }
+
+    stepChutes(dt) {
+      let k = null;
+      for (const p of this.craft.parts) {
+        if (p.role !== 'chute' || !chuteLive(p.chute)) continue;
+        if (!k) k = { air: this.inAtmosphere(), falling: this.verticalSpeed() < -1, radar: this.radarAltitude(), speed: this.speed() };
+        const ev = advanceChute(p.chute, p.def, dt, k);
+        if (!ev) continue;
+        this.chuteLog.push({ ev, t: this.st.t, speed: k.speed, radar: k.radar });
+        this.msg(ev === 'drogue' ? 'Drogue chutes out' : 'Main chutes out · drogues cut away', ev === 'drogue' ? 'info' : 'good', 'chute-' + ev);
+        this._chuteEst = null;
+      }
+    }
+
+    /** After touchdown (or a crash) the canopies collapse. */
+    spendChutes() {
+      for (const p of this.chutePacks()) if (p.chute.stage === 'drogue' || p.chute.stage === 'main') p.chute.stage = 'spent';
+    }
+
+    /**
+     * Touchdown estimate under parachutes: a fall from here with the same opening rules and drag,
+     * engines off. {t: seconds to touchdown, speed: descent rate then, horizontal}, or null without an
+     * armed or open pack, or outside the air. The map's path ignores drag, so this replaces its impact
+     * time while the chutes work. Recomputed a few times a second.
+     */
+    chuteDescent() {
+      const packs = this.chutePacks().filter((p) => chuteLive(p.chute));
+      if (!packs.length || this.situation !== 'flying' || !this.inAtmosphere()) return null;
+      const key = packs.map((p) => p.chute.stage).join();
+      const C = this._chuteEst;
+      if (C && C.key === key && this.realClock - C.real < 0.2 && this.st.t >= C.simT) {
+        return { t: Math.max(0, C.t - (this.st.t - C.simT)), speed: C.speed, horizontal: C.horizontal };
+      }
+      const b = this.st.body, sys = this.sys;
+      const m = this.craft.mass(), g = this.localGravity();
+      const radar = this.radarAltitude();
+      const ground = this.altitude() - radar; // altitude of the touchdown point above the mean radius
+      const base = this.cfg.sim.dragCd * this.geometry().dragArea;
+      const states = packs.map((p) => ({ c: JSON.parse(JSON.stringify(p.chute)), D: p.def }));
+      let h = radar, d = -this.verticalSpeed(), u = Math.abs(this.horizontalSpeed()), t = 0;
+      for (let i = 0; i < 40000 && h > 0 && t < 7200; i++) {
+        const V = Math.hypot(d, u);
+        const rho = sys.density(b, h + ground);
+        let area = base;
+        for (const s of states) area += chuteArea(s.c, s.D);
+        const k = (0.5 * rho * area) / m;
+        const opening = states.some((s) => (s.c.stage === 'drogue' && s.c.drogue < 1) || (s.c.stage === 'main' && s.c.main.some((x) => x < 1)));
+        let dt = Math.min(opening ? 0.05 : 1, 0.25 / (k * V + 1e-6));
+        if (d > 0) dt = Math.min(dt, Math.max(0.02, (0.5 * h) / d));
+        for (const s of states) advanceChute(s.c, s.D, dt, { air: rho > 0, falling: d > 1, radar: h, speed: V });
+        const damp = 1 + k * V * dt; // semi-implicit drag: stable for any step
+        const dn = (d + g * dt) / damp;
+        u /= damp;
+        h -= 0.5 * (d + dn) * dt;
+        d = dn;
+        t += dt;
+      }
+      this._chuteEst = { key, real: this.realClock, simT: this.st.t, t, speed: Math.max(0, d), horizontal: u };
+      return { t, speed: Math.max(0, d), horizontal: u };
+    }
 
     /**
      * Cautions and warnings for this moment, warnings first: {id, level: 'warning' | 'caution', text,
@@ -124,19 +236,34 @@
       if (this.situation === 'crashed' || this.situation === 'prelaunch') return out;
       const c = this.craft, A = this.cfg.alerts;
       const eng = this.engineStatus();
-      if (eng !== 'ok' && this.hasNextStage()) {
+      const chutesNext = this.nextStageIsChutes();
+      if (eng !== 'ok' && this.hasNextStage() && !chutesNext) {
         out.push({ id: 'stage', level: 'caution', text: eng === 'dry' ? 'Stage empty · press Space' : 'No engine lit · press Space', key: 'stage' + c.nextStage, once: true });
+      }
+      const B = this.st.body;
+      if (chutesNext && this.situation === 'flying' && B.atmosphere && this.altitude() < B.atmosphere.height && this.verticalSpeed() < -1) {
+        out.push({ id: 'stage', level: 'caution', text: 'Chutes not armed · press Space', key: 'chute-arm' + c.nextStage, once: true });
       }
       if (eng === 'ok' && this.isThrusting()) {
         const fu = c.activeStageFuel();
         if (fu.max > 0 && fu.fuel / fu.max < A.lowFuel) out.push({ id: 'fuel', level: 'caution', text: `Low fuel · ${SB.Flight.pct(fu.fuel / fu.max)}`, key: 'fuel' + c.nextStage, once: true });
+      }
+      const pack = this.chutePacks().find((p) => p.chute.stage === 'armed');
+      if (pack && this.situation === 'flying') {
+        if (!this.st.body.atmosphere) out.push({ id: 'chute', level: 'caution', text: 'Chutes armed · no air here', key: 'chute-noair', once: true });
+        else if (this.inAtmosphere() && this.verticalSpeed() < -1 && this.speed() >= pack.def.drogue.maxSpeed) {
+          out.push({ id: 'chute', level: 'caution', text: 'Chutes armed · too fast to open', key: 'chute-fast', once: true });
+        }
       }
       if (this.situation === 'flying') {
         const radar = this.radarAltitude();
         if (radar < A.groundRange) {
           const lim = this.landingLimits();
           const vs = this.verticalSpeed(), down = -vs;
-          if (down > lim.maxDescent) {
+          // a descent the chutes will bring down gently needs no sink-rate alert
+          const est = this.chuteDescent();
+          const chutesWillDo = est && est.speed <= this.landingLimits(true).maxDescent;
+          if (down > lim.maxDescent && !chutesWillDo) {
             const accel = (eng === 'ok' ? c.thrustState(1, this.pressureRatio()).thrust / c.mass() : 0) - this.localGravity();
             const need = accel > 0 ? (down * down - lim.maxDescent * lim.maxDescent) / (2 * accel) : Infinity;
             const ratio = need / Math.max(0.5, radar);
@@ -164,7 +291,7 @@
     trackEngine() {
       const eng = this.engineStatus();
       if (this.lastEngine === 'ok' && eng === 'dry' && this.situation !== 'crashed') {
-        this.msg(this.hasNextStage() ? 'Out of fuel · press Space to stage' : 'Out of fuel', 'warn', 'flameout');
+        this.msg(this.hasNextStage() && !this.nextStageIsChutes() ? 'Out of fuel · press Space to stage' : 'Out of fuel', 'warn', 'flameout');
       }
       this.lastEngine = eng;
     }
@@ -251,7 +378,7 @@
       if (horizontal > lim.maxHorizontal) reasons.push(`horizontal speed ${horizontal.toFixed(1)} m/s (limit ${lim.maxHorizontal} m/s)`);
       if (tilt > lim.maxTiltDeg) reasons.push(`tilted ${tilt.toFixed(0)}° from the surface (limit ${lim.maxTiltDeg}°)`);
       if (slope > maxSlope) reasons.push(`ground slope ${slope.toFixed(0)}° is too steep (limit ${maxSlope}°)`);
-      const report = { body: b, descent, horizontal, tilt, slope, legs: g.legsAtBottom, limits: lim, t: st.t, speed: Math.hypot(st.vx, st.vy), reasons };
+      const report = { body: b, descent, horizontal, tilt, slope, legs: g.legsAtBottom, chutes: this.mainsFraction() > 0.5, limits: lim, t: st.t, speed: Math.hypot(st.vx, st.vy), reasons };
       if (reasons.length) this.crash(report);
       else this.land(report, ang);
     }
@@ -259,6 +386,7 @@
     land(report, ang) {
       this.situation = 'landed';
       this.outcome = Object.assign({ type: 'landed' }, report);
+      this.spendChutes();
       this.placeOnSurface(report.body, ang);
       this.warpIndex = 0;
       this.predDirty = true;
@@ -274,6 +402,7 @@
       this.warpIndex = 0;
       this.prediction = null;
       this.alertList = [];
+      this.spendChutes();
       this.planner.clear();
       this.spawnExplosion(this.st.rx, this.st.ry, 90);
       this.msg(`Crashed into ${report.body.name}`, 'bad');
@@ -316,6 +445,7 @@
       if (dropped) parts.push(`dropped ${dropped} part${dropped > 1 ? 's' : ''}`);
       if (res.ignited.length) parts.push('ignited ' + res.ignited.map((p) => p.def.name.split(' ')[0]).join(', '));
       if (res.legs.length) parts.push('legs out');
+      if (res.armed.length) parts.push('chutes armed');
       this.msg(`Stage ${res.number}: ${parts.join(' · ') || 'nothing to do'}`, 'info');
       this.stageLog.push({ number: res.number, t: st.t, alt: this.altitude() });
       this.predDirty = true;
@@ -324,6 +454,8 @@
 
     // ------------------------------------------------------------------ warp
     warpLevels() { return this.cfg.sim.warpLevels; }
+    /** Warp coasts on Kepler orbits only above the physics limit and outside the air. */
+    onRails() { return this.warpRate() > this.cfg.sim.maxPhysicsWarp && !this.inAtmosphere(); }
     warpRate() { return this.cfg.sim.warpLevels[this.warpIndex]; }
     physicsWarpIndex() {
       const L = this.cfg.sim.warpLevels;
@@ -347,11 +479,15 @@
       if (this.isLanded()) return { index: idx, reason };
       const phys = this.physicsWarpIndex();
       if (this.isThrusting()) { idx = Math.min(idx, phys); reason = 'engines firing — cut throttle (X) to warp faster'; }
-      else if (this.inAtmosphere()) { idx = Math.min(idx, phys); reason = 'in the atmosphere'; }
+      else if (this.inAtmosphere()) {
+        if (this.mainsOpen()) { idx = Math.min(idx, Math.max(phys, L.indexOf(this.cfg.sim.chuteWarp))); reason = 'under parachutes'; }
+        else { idx = Math.min(idx, phys); reason = 'in the atmosphere'; }
+      }
       const lead = this.cfg.sim.warpLeadSeconds;
       const ev = this.nextEvent();
       if (ev) {
-        const dt = ev.t - this.st.t;
+        let dt = ev.t - this.st.t;
+        if (ev.type === 'impact') { const est = this.chuteDescent(); if (est) dt = est.t; } // the path ignores drag
         let j = idx;
         while (j > 0 && L[j] * lead > dt) j--;
         if (ev.type === 'impact' && dt < 20) j = 0;
@@ -400,8 +536,7 @@
     // ------------------------------------------------------------------ prediction
     maybePredict(force) {
       if (this.isLanded() || this.situation === 'crashed') { this.prediction = null; return; }
-      const rails = this.warpRate() > this.cfg.sim.maxPhysicsWarp;
-      const interval = rails ? 0 : this.isThrusting() ? 0.1 : 0.25;
+      const interval = this.onRails() ? 0 : this.isThrusting() ? 0.1 : 0.25;
       if (!force && !this.predDirty && this.realClock - this.lastPredReal < interval) return;
       this.prediction = SB.predict(this.sys, this.st, {
         clearance: this.contactClearance(), target: this.target, maxSegments: this.cfg.sim.predictionSegments,
@@ -416,13 +551,13 @@
       if (this.paused) { this.alertList = this.alerts(); return; }
       realDt = Math.min(realDt, 0.1);
       this.updateParticles(realDt);
-      this.animateLegs(realDt);
+      this.animateParts(realDt);
       if (this.situation === 'crashed') return;
       if (this.throttleInput) this.setThrottle(this.throttle + this.throttleInput * this.cfg.control.throttleRate * realDt);
       this.maybePredict(false);
       this.enforceWarpLimit();
       const rate = this.warpRate();
-      if (rate > this.cfg.sim.maxPhysicsWarp) {
+      if (this.onRails()) {
         this.railsAdvance(realDt * rate);
       } else {
         const dt = this.cfg.sim.physicsDt;
@@ -469,6 +604,17 @@
       if (this.isLanded()) { this.omega = 0; return; }
       const c = this.cfg.control;
       const maxA = c.maxAngularAccel, maxW = c.maxAngularRate;
+      // Hanging from parachutes, the craft swings round to trail them (nose into the airflow's
+      // source, i.e. pointing retrograde) and cannot be steered.
+      let pull = 0;
+      for (const p of this.craft.parts) if (p.role === 'chute' && chuteLive(p.chute)) pull = Math.max(pull, p.chute.drogue * 0.5, mainFraction(p.chute));
+      if (pull > 0.02 && this.inAtmosphere() && this.speed() > 0.5) {
+        const err = wrap(Math.atan2(-this.st.vy, -this.st.vx) - this.heading);
+        const want = Math.sign(err) * Math.min(maxW * 1.5, 2.2 * Math.abs(err)) * Math.min(1, pull * 3);
+        this.omega = approach(this.omega, want, maxA * 2 * dt);
+        this.heading = wrap(this.heading + this.omega * dt);
+        return;
+      }
       if (this.rotInput !== 0) {
         if (this.isHoldMode()) this.setSas('stability', true);
         this.omega = clamp(this.omega + this.rotInput * maxA * dt, -maxW, maxW);
@@ -492,6 +638,7 @@
       const st = this.st, b = st.body;
       const pr = this.sys.pressureRatio(b, this.altitude());
       if (this.isLanded()) { this.landedStep(dt, pr); return; }
+      this.stepChutes(dt);
       if (this.isThrusting() || this.inAtmosphere()) {
         this.numericStep(dt, pr);
         this.checkSoiNumeric();
@@ -528,7 +675,7 @@
       const ts = this.craft.thrustState(this.throttle, pr);
       const aT = ts.thrust / m;
       const hx = Math.cos(this.heading), hy = Math.sin(this.heading);
-      const CdA = this.cfg.sim.dragCd * this.geometry().dragArea;
+      const CdA = this.cfg.sim.dragCd * this.geometry().dragArea + this.chuteCdA();
       const mu = b.mu, R = b.radius, atmo = !!b.atmosphere;
       const a = [0, 0];
       function acc(rx, ry, vx, vy) {
@@ -649,10 +796,18 @@
       }
     }
 
-    /** Opening legs swing down in real time (the same speed under time warp). Cosmetic only. */
-    animateLegs(realDt) {
+    /**
+     * Cosmetic animation in real time (the same speed under time warp): opening legs swing down, cut
+     * drogues drift away, spent canopies collapse.
+     */
+    animateParts(realDt) {
       for (const p of this.craft.parts) {
         if (p.role === 'legs' && p.legsOut && p.deploy < 1) p.deploy = Math.min(1, p.deploy + realDt / (p.def.deployTime || 1.2));
+        if (p.role === 'chute') {
+          const c = p.chute;
+          if (c.stage === 'main' && c.cut < 1) c.cut = Math.min(1, c.cut + realDt / 1.5);
+          if (c.stage === 'spent' && c.gone < 1) c.gone = Math.min(1, c.gone + realDt / 2.5);
+        }
       }
     }
 

@@ -25,7 +25,7 @@
     return { command: 'pod', tank: 'tank', engine: 'engine' }[d.category] || 'structural';
   }
 
-  const isStageable = (type) => role(type) === 'engine' || role(type) === 'decoupler';
+  const isStageable = (type) => role(type) === 'engine' || role(type) === 'decoupler' || role(type) === 'chute';
 
   function partMass(p) {
     const d = p.def || def(p.type);
@@ -106,6 +106,8 @@
         const q = { uid: p.uid, type: p.type, def: d, role: role(p.type), fuel: p.fuel !== undefined ? p.fuel : d.fuel || 0, fuelMax: d.fuel || 0, paint: p.paint || null };
         // landing legs (cosmetic): legsOut once told to open; deploy animates 0 (folded) .. 1 (down)
         if (q.role === 'legs') { q.legsOut = !!p.legsOut; q.deploy = q.legsOut ? 1 : 0; }
+        // parachutes: stage packed | armed | drogue | main | spent; drogue and main[] are open fractions
+        if (q.role === 'chute') q.chute = p.chute ? JSON.parse(JSON.stringify(p.chute)) : { stage: 'packed', t: 0, drogue: 0, main: [0, 0, 0], cut: 0, gone: 0 };
         return q;
       });
       this.stages = (stages || []).map((s) => s.slice());
@@ -206,7 +208,7 @@
       if (this.nextStage >= this.stages.length) return null;
       const step = this.stages[this.nextStage];
       this.nextStage += 1;
-      const res = { number: this.nextStage, ignited: [], decoupled: [] };
+      const res = { number: this.nextStage, ignited: [], decoupled: [], armed: [] };
       for (const uid of step) {
         const p = this.find(uid);
         if (p && p.role === 'decoupler') res.decoupled.push(this.decouple(p));
@@ -214,6 +216,7 @@
       for (const uid of step) {
         const p = this.find(uid);
         if (p && p.role === 'engine') { this.active.add(uid); res.ignited.push(p); }
+        if (p && p.role === 'chute' && p.chute.stage === 'packed') { p.chute.stage = 'armed'; p.chute.t = 0; res.armed.push(p); }
       }
       this.invalidate();
       res.legs = this.openLegs(res.decoupled.length > 0);
@@ -383,9 +386,14 @@
     }
     const leftover = craft.fuelTotal();
     if (leftover > 1) warnings.push({ level: 'warn', text: `${Math.round(leftover)} kg of fuel is never burned (no engine in its section fires).` });
+    const chuteAt = craft.parts.findIndex((p) => p.role === 'chute');
+    if (chuteAt > 0) warnings.push({ level: 'warn', text: 'The parachute pack belongs at the very top of the stack, above the pod.' });
     // After every stage has fired, `craft` is the final stage: does it still have legs?
     if (pods && !craft.geometry().legsAtBottom) {
-      warnings.push({ level: 'info', text: 'Final stage has no landing legs at its base: touchdowns must be under 2.5 m/s.' });
+      const lim = cfg.landing;
+      warnings.push({ level: 'info', text: chuteAt >= 0
+        ? `Final stage has no landing legs at its base: touchdowns must be under ${lim.withoutLegs.maxDescent} m/s, or ${lim.underChutes.maxDescent} m/s hanging from the main chutes.`
+        : `Final stage has no landing legs at its base: touchdowns must be under ${lim.withoutLegs.maxDescent} m/s.` });
     }
     return result;
   }

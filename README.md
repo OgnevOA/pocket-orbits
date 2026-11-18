@@ -23,6 +23,7 @@ A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage 
   - A stage running dry, low fuel, and a landing going wrong (sink rate, drift, tilt, steep ground) each get a labelled strip and a chime. The STAGE button pulses when a stage is waiting.
   - *Sink rate · burn now* flashes the screen edges red and beeps.
   - Nothing is shown by colour alone: HUD rows that need attention get a ⚠, and a safe orbit gets a ✓.
+- **Parachutes** for coming home to Verdis: arm the pack with Space, and two drogues, then three main canopies, open by themselves when it's safe. The HUD and map give the touchdown time and speed, and time warp goes up to 50× under the mains.
 - **Time warp** that slows itself before sphere-of-influence changes, the atmosphere, the ground and planned burns.
 - **Landings** judged on descent rate, drift, tilt and slope, with a clear landed or crashed result. Landing legs ride folded against the stack and swing down when their stage fires.
 - **Planets rendered on the GPU** from layered 3D noise and craters, lit by one sun with real day and night sides.
@@ -38,6 +39,8 @@ A small 2D spaceflight sandbox that runs in your browser. Build a rocket, stage 
 | **Orbit.** Above Verdis, with clouds and a terminator. | **Lunar orbit.** Captured around cratered Pock. |
 | ![Landed on Pock, with the touchdown report](docs/screenshots/landed.png) | ![The planet and three moons rendered as textured spheres](docs/screenshots/planets.jpg) |
 | **Touchdown.** Every landing is graded. | **The worlds.** Verdis, Pock, Ferro and Rime. |
+| ![Coming home under three main parachutes, with the touchdown estimate on the HUD](docs/screenshots/chutes.png) | ![A sink-rate warning: red strip, flashing screen edges, V.SPD flagged](docs/screenshots/warning.png) |
+| **Home again.** Three mains, the touchdown on the HUD. | **Sink rate.** Warnings you can't miss. |
 
 ## Play
 
@@ -125,6 +128,8 @@ A circular orbit 25 km above Verdis takes about 630 m/s. The moons orbit clockwi
 
 **Landing** is judged on descent rate and sideways speed relative to the surface, tilt (against local vertical or the ground) and ground slope. Landing legs on the bottom stage raise the limits.
 
+**Parachutes** add drag while they're open: two small drogues, then three mains with 280 m² of drag area between them, each filling over a few seconds. They open only when it's safe (the drogues below 8 km and 250 m/s, the mains below 2.5 km and 90 m/s), so the slowdown stays gentle. Under the mains the craft swings to hang straight down, and up to 7 m/s is a safe touchdown. Because the map's path ignores drag, a separate estimate replays the fall with the same rules to give the touchdown time and speed, and time warp uses it to slow down before the ground.
+
 **Alerts** follow the same limits. Sink rate compares the distance your engines need, at full thrust, to slow you to a safe touchdown speed with the height that's left: over 60% of it is a caution, over 90% a warning. Drift, tilt and steep ground are called out close to the ground, and only while you're descending. A descent flown at about RADAR ÷ 10, like the scripted landing in the tests, triggers none of them.
 
 **Planets** are rendered per pixel in a WebGL2 shader.
@@ -137,13 +142,13 @@ A circular orbit 25 km above Verdis takes about 630 m/s. The moons orbit clockwi
 - Throttle, the firing engines' sound profiles and air pressure shape it. In vacuum, only a muffled rumble remains.
 - Ignition, flameout and staging have their own sounds.
 
-**Simplifications:** the world is a single 2D plane, the home planet doesn't rotate, and there's no reentry heating or parachutes.
+**Simplifications:** the world is a single 2D plane, the home planet doesn't rotate, there's no wind, and there's no reentry heating.
 
 ## Make it yours
 
 Everything tunable lives in [`js/config.js`](js/config.js):
 - the planet, the moons and the launch site;
-- the part catalogue and the preset rockets;
+- the part catalogue (including the parachutes' sizes and opening limits) and the preset rockets, among them *Kestrel Return*, the starter with a parachute pack;
 - the warp levels, the landing limits and the caution and warning thresholds;
 - each body's texture colours and crater counts, and the sun direction;
 - the paint palette, each part role's default colours and patterns, and the liveries;

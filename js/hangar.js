@@ -179,7 +179,7 @@
         });
       }
       box.querySelectorAll('.pat').forEach((b) => b.classList.toggle('active', b.dataset.pattern === pt.pattern));
-      const roleName = { pod: 'pod', tank: 'tank', engine: 'engine', decoupler: 'decoupler', legs: 'leg ring' }[role] || 'part';
+      const roleName = { pod: 'pod', tank: 'tank', engine: 'engine', decoupler: 'decoupler', legs: 'leg ring', chute: 'parachute pack' }[role] || 'part';
       const sameType = this.design.parts.filter((q) => q.type === p.type).length;
       const sameRole = this.design.parts.filter((q) => SB.Craft.role(q.type) === role).length;
       const bt = document.getElementById('ppSameType'), br = document.getElementById('ppSameRole');
@@ -355,12 +355,18 @@
       const ctx = cv.getContext('2d');
       const d = C().parts[type];
       ctx.clearRect(0, 0, cv.width, cv.height);
-      const isLegs = SB.Craft.role(type) === 'legs';
-      const hTot = d.height + (isLegs ? 1.2 : 0);
-      const wTot = d.width + (isLegs ? d.footSpread * 2 : 0);
+      const r = SB.Craft.role(type), isLegs = r === 'legs', isChute = r === 'chute';
+      const hTot = d.height + (isLegs ? 1.2 : 0) + (isChute ? 1.3 : 0);
+      const wTot = Math.max(d.width + (isLegs ? d.footSpread * 2 : 0), isChute ? 1.3 : 0);
       const s = Math.min((cv.width - 16) / wTot, (cv.height - 16) / hTot, 60);
-      const y = (cv.height - hTot * s) / 2;
+      const y = (cv.height - hTot * s) / 2 + (isChute ? 1.3 * s : 0);
       if (isLegs) SB.Render.drawLegStruts(ctx, d, cv.width / 2, y + d.height * s * 0.5, y + hTot * s, s, SB.Paint.resolve(type));
+      if (isChute) { // a single small canopy above the pack, so the part reads as a parachute
+        const pt = SB.Paint.resolve(type);
+        ctx.strokeStyle = 'rgba(225,230,238,0.7)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cv.width / 2, y + 2); ctx.lineTo(cv.width / 2 - 0.6 * s, y - 0.45 * s); ctx.moveTo(cv.width / 2, y + 2); ctx.lineTo(cv.width / 2 + 0.6 * s, y - 0.45 * s); ctx.stroke();
+        ctx.save(); ctx.translate(cv.width / 2, y - 0.45 * s); SB.Render.drawCanopy(ctx, 1.25 * s, 1, pt, 8, s); ctx.restore();
+      }
       SB.Render.drawPart(ctx, type, cv.width / 2, y, s);
     }
 
@@ -539,6 +545,22 @@
         SB.Render.drawLegStruts(ctx, p.def, x, y0 + (g.tops.get(p.uid) + p.def.height / 2) * s, y0 + g.legReach.get(p.uid) * s, s,
           SB.Paint.resolve(p.type, p.paint), p.legsOut || p.uid === this.selected ? 1 : 0);
       }
+      // a selected parachute pack shows its open canopies (in its paint) in the free space left of the stack
+      const sel = craft.parts.find((p) => p.uid === this.selected && p.role === 'chute');
+      if (sel) {
+        const d = sel.def;
+        const reach = d.main.riser * 1.1 + d.main.size * 0.5, span = 2 * (Math.sin(0.45) * d.main.riser + d.main.size * 0.55);
+        const left = x - (g.maxWidth * s) / 2 - 90; // keeps clear of the CoM marker
+        const ps = Math.min((left - 30) / span, (H * 0.5) / reach);
+        if (ps > 2) {
+          const px = left / 2 + 10, py = H / 2 + (reach * ps) / 2;
+          SB.Render.drawChuteCluster(ctx, d, px, py, ps, SB.Paint.resolve(sel.type, sel.paint), { stage: 'main', main: [1, 1, 1], drogue: 0, cut: 1, gone: 0 }, 0);
+          SB.Render.drawPart(ctx, sel.type, px, py - d.height * 0.4 * ps, ps, sel.paint, { chute: { stage: 'main' } });
+          ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+          ctx.fillStyle = 'rgba(200,220,255,0.55)';
+          ctx.fillText('Main canopies, open', px, py + 12);
+        }
+      }
       craft.parts.forEach((p, i) => {
         const top = y0 + g.tops.get(p.uid) * s, h = p.def.height * s;
         const w = Math.max(p.def.width, p.def.bell || 0) * s;
@@ -567,7 +589,7 @@
           ctx.fillStyle = 'rgba(210,225,255,0.7)';
           ctx.textAlign = 'left';
           ctx.font = '11px system-ui, sans-serif';
-          ctx.fillText(p.role === 'engine' ? 'ignite' : 'separate', bx + 40, by + 0.5);
+          ctx.fillText(p.role === 'engine' ? 'ignite' : p.role === 'chute' ? 'chutes' : 'separate', bx + 40, by + 0.5);
         }
         if (p.role === 'decoupler') {
           ctx.strokeStyle = 'rgba(241,194,50,0.35)';
@@ -614,7 +636,7 @@
         html += '<table class="dv"><thead><tr><th>Stage</th><th>Δv vac</th><th>Δv ASL</th><th>TWR</th><th>Burn</th></tr></thead><tbody>';
         a.stages.forEach((s, i) => {
           html += `<tr><td><span class="badge" style="background:${STAGE_COLORS[i % STAGE_COLORS.length]}">S${s.number}</span></td>
-            <td>${Math.round(s.dvVac)}</td><td>${Math.round(s.dvAsl)}</td><td>${s.thrustVac > 0 ? s.twrAsl.toFixed(2) : '—'}</td><td>${s.burnTime > 0 ? Math.round(s.burnTime) + ' s' : '—'}</td></tr>`;
+            <td>${s.thrustVac > 0 || s.dvVac > 0 ? Math.round(s.dvVac) : '—'}</td><td>${s.thrustVac > 0 || s.dvAsl > 0 ? Math.round(s.dvAsl) : '—'}</td><td>${s.thrustVac > 0 ? s.twrAsl.toFixed(2) : '—'}</td><td>${s.burnTime > 0 ? Math.round(s.burnTime) + ' s' : '—'}</td></tr>`;
         });
         html += '</tbody></table><p class="note">Δv in m/s. TWR uses sea-level thrust and Verdis gravity.</p>';
       }
@@ -622,7 +644,7 @@
 
       // staging editor
       let sh = '';
-      if (!d.stages.length) sh = '<p class="note">No engines or decouplers yet.</p>';
+      if (!d.stages.length) sh = '<p class="note">No engines, decouplers or parachutes yet.</p>';
       d.stages.forEach((step, i) => {
         const col = STAGE_COLORS[i % STAGE_COLORS.length];
         const st = a.stages[i];
@@ -638,7 +660,7 @@
           const type = this.typeOf(uid);
           const r = SB.Craft.role(type);
           sh += `<div class="stage-item" data-uid="${uid}" data-role="${r}">
-            <span class="tag ${r === 'engine' ? 'ignite' : 'decouple'}">${r === 'engine' ? 'IGNITE' : 'DECOUPLE'}</span>
+            <span class="tag ${r === 'engine' ? 'ignite' : r === 'chute' ? 'chute' : 'decouple'}">${r === 'engine' ? 'IGNITE' : r === 'chute' ? 'CHUTES' : 'DECOUPLE'}</span>
             <span class="si-name">${esc(C().parts[type].name)}</span>
             <button class="mv-up icon" title="Move to an earlier stage">▲</button>
             <button class="mv-down icon" title="Move to a later stage">▼</button>

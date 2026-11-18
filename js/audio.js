@@ -115,6 +115,28 @@
   }
   /** Caution: a falling two-tone chime. */
   function chime(ctx, dest, t) { tone(ctx, dest, 880, t, 0.16, 0.5); tone(ctx, dest, 660, t + 0.17, 0.24, 0.5); }
+  /** A parachute filling: a low thump with a rush of air (bigger for the mains). */
+  function whump(ctx, dest, bufs, t, big) {
+    const n = ctx.createBufferSource();
+    n.buffer = bufs.pink;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = big ? 700 : 1100; lp.Q.value = 0.7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(big ? 0.9 : 0.6, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + (big ? 1.1 : 0.6));
+    n.connect(lp); lp.connect(g); g.connect(dest);
+    n.start(t, 0.3); n.stop(t + 1.3);
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(big ? 70 : 110, t);
+    o.frequency.exponentialRampToValueAtTime(35, t + 0.3);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.linearRampToValueAtTime(big ? 0.8 : 0.5, t + 0.01);
+    og.gain.exponentialRampToValueAtTime(0.0005, t + 0.4);
+    o.connect(og); og.connect(dest);
+    o.start(t); o.stop(t + 0.5);
+  }
   /** Warning: two quick high pips (repeated while the warning lasts). */
   function beep(ctx, dest, t) { tone(ctx, dest, 1250, t, 0.08, 0.3, 'square'); tone(ctx, dest, 1250, t + 0.13, 0.08, 0.3, 'square'); }
 
@@ -272,7 +294,7 @@
     voice: null,
     enabled: true,
     volume: 0.8,
-    stats: { ignitions: 0, flameouts: 0, level: 0, bus: 0, chimes: 0, beeps: 0 },
+    stats: { ignitions: 0, flameouts: 0, level: 0, bus: 0, chimes: 0, beeps: 0, whumps: 0 },
     prev: null,
     flightRef: null,
 
@@ -335,7 +357,12 @@
       this.updateAlerts(f, now);
       if (!this.voice) this.voice = new EngineVoice(this.ctx, this.chain.engineBus, this.bufs);
       if (!f) { this.voice.set({ level: 0, size: 0.5, throttle: 0, air: 1 }, 0.1); this.prev = null; this.stats.level = 0; return; }
-      if (this.flightRef !== f) { this.flightRef = f; this.prev = null; }
+      if (this.flightRef !== f) { this.flightRef = f; this.prev = null; this.chuteSeen = f.chuteLog.length; }
+      while (this.chuteSeen < f.chuteLog.length) {
+        const e = f.chuteLog[this.chuteSeen++];
+        whump(this.ctx, this.chain.engineBus, this.bufs, now + 0.01, e.ev === 'main');
+        this.stats.whumps++;
+      }
       const st = engineState(f);
       const level = levelFor(st, A.vacuumLevel);
       const prev = this.prev || { firing: false, uids: new Set() };
@@ -400,11 +427,11 @@
       return {
         state: this.ctx ? this.ctx.state : 'none', enabled: this.enabled, volume: this.volume,
         level: this.stats.level, bus: this.stats.bus, ignitions: this.stats.ignitions, flameouts: this.stats.flameouts,
-        firing: !!(this.prev && this.prev.firing), chimes: this.stats.chimes, beeps: this.stats.beeps,
+        firing: !!(this.prev && this.prev.firing), chimes: this.stats.chimes, beeps: this.stats.beeps, whumps: this.stats.whumps,
       };
     },
   };
 
   SB.Audio = Audio;
-  SB.AudioSynth = { makeBuffers, buildChain, EngineVoice, engineState, levelFor, chime, beep };
+  SB.AudioSynth = { makeBuffers, buildChain, EngineVoice, engineState, levelFor, chime, beep, whump };
 })(typeof window !== 'undefined' ? window : globalThis);

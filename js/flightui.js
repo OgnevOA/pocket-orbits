@@ -309,7 +309,8 @@
         ${row('Horizontal speed', fmtSpeed(o.horizontal), `limit ${L.maxHorizontal} m/s`, o.horizontal > L.maxHorizontal)}
         ${row('Tilt', o.tilt.toFixed(1) + '°', `limit ${L.maxTiltDeg}°`, o.tilt > L.maxTiltDeg)}
         ${row('Ground slope', o.slope.toFixed(1) + '°', `limit ${SB.CONFIG.landing.maxSlopeDeg}°`, o.slope > SB.CONFIG.landing.maxSlopeDeg)}
-        <div class="kv"><span>Landing legs</span><b>${o.legs ? 'yes' : 'no (strict limits)'}</b><small></small></div>
+        <div class="kv"><span>Landing legs</span><b>${o.legs ? 'yes' : o.chutes ? 'no' : 'no (strict limits)'}</b><small></small></div>
+        ${o.chutes ? '<div class="kv"><span>Main chutes</span><b>open</b><small></small></div>' : ''}
         ${o.reasons.length ? '<ul class="reasons">' + o.reasons.map((r) => `<li>${esc(r)}</li>`).join('') + '</ul>' : ''}
         <div class="actions">
           ${ok ? '<button data-act="continue" class="primary">Continue flying</button>' : ''}
@@ -339,7 +340,7 @@
       const rate = f.warpRate();
       const lim = f.maxWarpIndex();
       $('warpLabel').textContent = rate + '×';
-      $('warpMode').textContent = rate === 1 ? 'real time' : rate > SB.CONFIG.sim.maxPhysicsWarp ? 'on rails' : 'physics';
+      $('warpMode').textContent = rate === 1 ? 'real time' : f.onRails() ? 'on rails' : 'physics';
       $('warpNote').textContent = lim.index < f.warpLevels().length - 1 && lim.reason ? 'max ' + f.warpLevels()[lim.index] + '× · ' + lim.reason : '';
       $('warpBox').classList.toggle('warping', rate > 1);
       $('situation').textContent = f.situationText();
@@ -554,7 +555,7 @@
       const frac = fuel.max > 0 ? fuel.fuel / fuel.max : 0;
       const low = fuel.max > 0 && frac < SB.CONFIG.alerts.lowFuel;
       const fuelText = fuel.max <= 0 ? 'none'
-        : fuel.fuel <= 1e-6 ? (f.hasNextStage() ? 'EMPTY · Space' : 'EMPTY')
+        : fuel.fuel <= 1e-6 ? (f.hasNextStage() && !f.nextStageIsChutes() ? 'EMPTY · Space' : 'EMPTY')
           : `${Math.round(fuel.fuel).toLocaleString()} kg · ${SB.Flight.pct(frac)}${low ? ' LOW' : ''}`;
       row(fuel.active ? 'STAGE FUEL' : 'NEXT STAGE FUEL', fuelText, low ? 'warn' : '');
       bar(frac, low ? 'low' : 'fuel');
@@ -569,6 +570,19 @@
         row('GROUND', `slope ${slope.toFixed(0)}°${steep ? ' · too steep' : ''}`, steep ? 'warn' : '');
       }
       row('GRAVITY', `${f.localGravity().toFixed(2)} m/s²`);
+      const pack = f.chutePacks()[0];
+      if (pack && pack.chute.stage !== 'packed') {
+        const c = pack.chute;
+        const pct = Math.round(f.mainsFraction() * 100);
+        const text = { armed: 'armed', drogue: 'drogues', main: pct < 100 ? `mains opening · ${pct}%` : 'mains open', spent: 'spent' }[c.stage];
+        rows.push('<div class="t-sep"></div>');
+        row('CHUTES', text, mark.chute || (c.stage === 'main' || c.stage === 'drogue' ? 'ok' : ''));
+        const est = f.chuteDescent();
+        if (est) {
+          const lim = f.landingLimits(true).maxDescent;
+          row('TOUCHDOWN', `${SB.Render.fmtDur(est.t)} · ${est.speed.toFixed(1)} m/s`, est.speed > lim ? 'warn' : 'ok');
+        }
+      }
       $('telemetry').innerHTML = rows.join('');
     }
 
@@ -578,7 +592,8 @@
       if (c.nextStage >= c.stages.length) html += '<div class="st-empty">All stages used</div>';
       for (let i = c.nextStage; i < c.stages.length; i++) {
         const items = c.stages[i].map((uid) => c.find(uid)).filter(Boolean);
-        const parts = items.length ? items.map((p) => `<span class="tag ${p.role === 'engine' ? 'ignite' : 'decouple'}">${p.role === 'engine' ? 'IGNITE' : 'DECOUPLE'}</span> ${esc(p.def.name.split(' ')[0])}`).join('<br>') : '<i>nothing left to fire</i>';
+        const tag = (p) => (p.role === 'engine' ? ['ignite', 'IGNITE'] : p.role === 'chute' ? ['chute', 'CHUTES'] : ['decouple', 'DECOUPLE']);
+        const parts = items.length ? items.map((p) => `<span class="tag ${tag(p)[0]}">${tag(p)[1]}</span> ${esc(p.def.name.split(' ')[0])}`).join('<br>') : '<i>nothing left to fire</i>';
         html += `<div class="st ${i === c.nextStage ? 'next' : ''}"><b>S${i + 1}</b>${i === c.nextStage ? ' <small>next · Space</small>' : ''}<div>${parts}</div></div>`;
       }
       const active = c.parts.filter((p) => c.active.has(p.uid));
@@ -610,7 +625,9 @@
         html += kv('Period', isFinite(el.period) ? D(el.period) : '—');
         html += kv('Eccentricity', el.e.toFixed(3));
         const ev = f.nextEvent();
-        if (ev) html += kv('Next event', `${ev.type === 'soi' ? (ev.to.parent ? 'Enter ' + ev.to.name + ' SOI' : 'Leave ' + ev.from.name + ' SOI') : ev.type === 'atmo' ? 'Atmosphere' : 'Impact'} · ${D(ev.t - f.st.t)}`);
+        const est = ev && ev.type === 'impact' ? f.chuteDescent() : null;
+        if (est) html += kv('Next event', `Touchdown under chutes · ${D(est.t)}`);
+        else if (ev) html += kv('Next event', `${ev.type === 'soi' ? (ev.to.parent ? 'Enter ' + ev.to.name + ' SOI' : 'Leave ' + ev.from.name + ' SOI') : ev.type === 'atmo' ? 'Atmosphere' : 'Impact'} · ${D(ev.t - f.st.t)}`);
       }
       set('mpOrbit', html);
 

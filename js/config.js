@@ -86,6 +86,7 @@
       physicsDt: 0.02, // fixed physics step (s), independent of frame rate
       warpLevels: [1, 2, 4, 10, 50, 100, 500, 1000, 5000, 10000, 50000],
       maxPhysicsWarp: 4, // above this, warp is "on rails" (coasting only)
+      chuteWarp: 50, // physics warp allowed in the air while the main chutes are fully open
       warpLeadSeconds: 3, // keep the next event at least this many real seconds away
       maxPhysicsStepsPerFrame: 600,
       dragCd: 0.6,
@@ -103,6 +104,7 @@
       withLegs: { maxDescent: 6, maxHorizontal: 3, maxTiltDeg: 12 },
       withoutLegs: { maxDescent: 2.5, maxHorizontal: 1.5, maxTiltDeg: 8 },
       maxSlopeDeg: 25, // steeper ground is a crash either way
+      underChutes: { maxDescent: 7, maxHorizontal: 3, maxTiltDeg: 15 }, // a pod hanging from open mains
     },
 
     // Cautions (amber, a chime) and warnings (red, flashing screen edges, beeps) in flight.
@@ -123,6 +125,14 @@
       pod_lark: {
         category: 'command', name: 'Lark Command Pod', mass: 600, height: 1.4, width: 1.25,
         description: 'One-seat capsule with reaction wheels. Every flight needs one.',
+      },
+      chute: {
+        category: 'command', role: 'chute', name: 'Triad Parachute Pack', mass: 120, height: 0.4, width: 0.56,
+        // Space arms it. Two drogues open once the speed and height are safe, then three mains lower
+        // down (the drogues are cut away). cdA is the total drag area (m^2) when fully open.
+        drogue: { count: 2, cdA: 5, maxSpeed: 250, maxRadar: 8000, openTime: 1.0, size: 2.0, riser: 9 },
+        main: { count: 3, cdA: 280, maxSpeed: 90, maxRadar: 2500, openTime: 3.0, stagger: 0.45, size: 8.5, riser: 15 },
+        description: 'Sits on top of the pod. Space arms it; two drogues, then three mains open by themselves when it is safe. Needs air: Verdis only.',
       },
       tank_s: {
         category: 'tank', name: 'FT-100 Fuel Tank', dryMass: 60, fuel: 540, height: 1.0, width: 1.25,
@@ -183,6 +193,10 @@
         parts: ['pod_lark', 'tank_s', 'legs', 'eng_sparrow', 'decoupler', 'tank_m', 'eng_sparrow',
           'decoupler', 'tank_l', 'tank_m', 'eng_anvil'],
       },
+      {
+        name: 'Kestrel Return (with parachutes)',
+        parts: ['chute', 'pod_lark', 'tank_s', 'legs', 'eng_sparrow', 'decoupler', 'tank_m', 'eng_hammer'],
+      },
     ],
 
     // Synthesised sound (Web Audio). Engine parts carry their own `sound` profile:
@@ -209,25 +223,26 @@
         engine: { base: '#6f7680', accent: '#4c525b', patterns: [], labels: ['Housing', 'Nozzle'] },
         decoupler: { base: '#f1c232', accent: '#23272e', patterns: [], labels: ['Stripes', 'Base'] },
         legs: { base: '#5e6670', accent: '#aab2bd', patterns: [], labels: ['Ring', 'Legs'] },
+        chute: { base: '#f2f0ea', accent: '#e8772e', patterns: [], labels: ['Canopy', 'Gores'] },
       },
       // whole-rocket colour schemes (any role left out keeps its defaults)
       liveries: [
         { name: 'Classic', roles: {} },
         { name: 'Midnight', roles: {
           pod: { base: '#2a2e35', accent: '#c9a227', pattern: 'stripe' }, tank: { base: '#16181c', accent: '#c9a227', pattern: 'bands' },
-          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#c9a227', accent: '#16181c' }, legs: { base: '#3a3f47', accent: '#c9a227' } } },
+          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#c9a227', accent: '#16181c' }, legs: { base: '#3a3f47', accent: '#c9a227' }, chute: { base: '#16181c', accent: '#c9a227' } } },
         { name: 'Retro', roles: {
           pod: { base: '#f2f0ea', accent: '#16181c', pattern: 'split' }, tank: { base: '#f2f0ea', accent: '#16181c', pattern: 'checker' },
-          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#f2f0ea', accent: '#16181c' }, legs: { base: '#16181c', accent: '#c9ced6' } } },
+          engine: { base: '#3a3f47', accent: '#23272e' }, decoupler: { base: '#f2f0ea', accent: '#16181c' }, legs: { base: '#16181c', accent: '#c9ced6' }, chute: { base: '#f2f0ea', accent: '#16181c' } } },
         { name: 'Arctic', roles: {
           pod: { base: '#f2f0ea', accent: '#4fa3e0', pattern: 'plain' }, tank: { base: '#f2f0ea', accent: '#4fa3e0', pattern: 'rings' },
-          engine: { base: '#c9ced6', accent: '#8b939e' }, decoupler: { base: '#4fa3e0', accent: '#f2f0ea' }, legs: { base: '#c9ced6', accent: '#4fa3e0' } } },
+          engine: { base: '#c9ced6', accent: '#8b939e' }, decoupler: { base: '#4fa3e0', accent: '#f2f0ea' }, legs: { base: '#c9ced6', accent: '#4fa3e0' }, chute: { base: '#f2f0ea', accent: '#4fa3e0' } } },
         { name: 'Racer', roles: {
           pod: { base: '#c8352b', accent: '#f2f0ea', pattern: 'stripe' }, tank: { base: '#c8352b', accent: '#f2f0ea', pattern: 'stripe' },
-          engine: { base: '#16181c', accent: '#3a3f47' }, decoupler: { base: '#f2f0ea', accent: '#c8352b' }, legs: { base: '#16181c', accent: '#f2f0ea' } } },
+          engine: { base: '#16181c', accent: '#3a3f47' }, decoupler: { base: '#f2f0ea', accent: '#c8352b' }, legs: { base: '#16181c', accent: '#f2f0ea' }, chute: { base: '#f2f0ea', accent: '#c8352b' } } },
         { name: 'Copper', roles: {
           pod: { base: '#b87333', accent: '#24406e', pattern: 'plain' }, tank: { base: '#b87333', accent: '#24406e', pattern: 'rings' },
-          engine: { base: '#8b939e', accent: '#b87333' }, decoupler: { base: '#24406e', accent: '#b87333' }, legs: { base: '#24406e', accent: '#b87333' } } },
+          engine: { base: '#8b939e', accent: '#b87333' }, decoupler: { base: '#24406e', accent: '#b87333' }, legs: { base: '#24406e', accent: '#b87333' }, chute: { base: '#b87333', accent: '#24406e' } } },
       ],
     },
 

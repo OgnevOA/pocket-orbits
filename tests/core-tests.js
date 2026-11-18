@@ -448,6 +448,57 @@
       msg === 'Out of fuel · press Space to stage' && staged === 'none';
   });
 
+  check('Parachutes: drogues then three mains bring a pod down gently on Verdis; unarmed it crashes; they wait for safe speed and need air', (d) => {
+    const flatSite = findFlat(planet, planet.launchAngle + 0.3);
+    // a fall from h0 at v0 straight down; arm: number of stages to fire first; request the highest warp every frame
+    const drop = (types, arm, h0, v0, body) => {
+      body = body || planet;
+      const f = new SB.Flight(sys, SB.Craft.makeDesign('Drop', types));
+      const a = body === planet ? flatSite : findFlat(body, 1.0), R = sys.surfaceRadius(body, a) + f.geometry().bottomOffset + h0;
+      f.situation = 'flying'; f.st.body = body; f.st.rx = Math.cos(a) * R; f.st.ry = Math.sin(a) * R;
+      f.st.vx = -Math.cos(a) * v0; f.st.vy = -Math.sin(a) * v0; f.heading = a; f.setThrottle(0);
+      for (let i = 0; i < arm; i++) f.stage();
+      const out = { f, est: null, maxWarp: 0, alerts: new Set(), peakG: 0 };
+      let lastV = f.speed(), lastT = f.st.t;
+      Pilots.fly(f, () => {
+        if (f.outcome) return true;
+        f.setWarp(f.warpLevels().length - 1);
+        out.maxWarp = Math.max(out.maxWarp, f.warpRate());
+        for (const x of f.alertList) out.alerts.add(`${x.id}:${x.level}`);
+        if (f.st.t > lastT) { out.peakG = Math.max(out.peakG, (lastV - f.speed()) / (f.st.t - lastT) / 9.81); lastV = f.speed(); lastT = f.st.t; }
+        if (!out.est && f.mainsOpen()) out.est = Object.assign({ at: f.st.t }, f.chuteDescent());
+        return false;
+      }, { maxSim: 5000 });
+      out.o = f.outcome;
+      return out;
+    };
+    const show = (name, r) => d(`${name}: ${r.o ? r.o.type : 'no outcome'} at ${r.o ? r.o.descent.toFixed(2) : '?'} m/s, tilt ${r.o ? r.o.tilt.toFixed(1) : '?'}°; ` +
+      `${r.f.chuteLog.map((e) => `${e.ev} at ${Math.round(e.radar)} m, ${Math.round(e.speed)} m/s`).join(', ') || 'no chutes opened'}; peak ${r.peakG.toFixed(1)} g; max warp ${r.maxWarp}x; alerts ${[...r.alerts].join(' ') || 'none'}`);
+    const pod = drop(['chute', 'pod_lark'], 1, 9000, 200);
+    show('Pod, armed, from 9 km at 200 m/s', pod);
+    const e = pod.est;
+    if (e) d(`  touchdown estimate once the mains were open: ${e.t.toFixed(0)} s at ${e.speed.toFixed(2)} m/s; actual ${(pod.f.st.t - e.at).toFixed(0)} s at ${pod.o.descent.toFixed(2)} m/s`);
+    const bare = drop(['chute', 'pod_lark'], 0, 9000, 200);
+    show('Same pod, never armed', bare);
+    const fast = drop(['chute', 'pod_lark'], 1, 9000, 340);
+    show('Armed while falling at 340 m/s', fast);
+    const moon = drop(['chute', 'pod_lark'], 1, 400, 10, pock);
+    show('Armed above Pock (no air)', moon);
+    const preset = SB.CONFIG.presets.find((p) => /parachute/i.test(p.name));
+    const pd = SB.Craft.makeDesign(preset.name, preset.parts), an = SB.Craft.analyzeDesign(pd, sys);
+    const lastStep = pd.stages[pd.stages.length - 1].map((uid) => pd.parts.find((p) => p.uid === uid).type);
+    d(`Preset "${preset.name}": ${pd.stages.length} stages, the last fires ${lastStep.join(', ')}; warnings: ${an.warnings.map((w) => w.text).join(' | ') || 'none'}`);
+    const log = (r, ev) => r.f.chuteLog.find((x) => x.ev === ev);
+    const pd1 = log(pod, 'drogue'), pm1 = log(pod, 'main');
+    return pod.o.type === 'landed' && pod.o.descent <= 7 && pod.o.tilt < 5 && pd1 && pd1.speed < 250 && pd1.radar < 8000 && pm1 && pm1.speed < 90 && pm1.radar < 2500 &&
+      pod.maxWarp >= 50 && !/sink/.test([...pod.alerts].join()) && pod.peakG < 15 &&
+      Math.abs(e.t - (pod.f.st.t - e.at)) < 0.05 * e.t && Math.abs(e.speed - pod.o.descent) < 0.5 &&
+      bare.o.type === 'crashed' && !bare.f.chuteLog.length && bare.alerts.has('stage:caution') &&
+      pod.alerts.size === 0 && fast.alerts.has('chute:caution') && log(fast, 'drogue').speed < 250 && fast.o.type === 'landed' &&
+      moon.alerts.has('chute:caution') && !moon.f.chuteLog.length &&
+      lastStep.join() === 'chute' && !an.warnings.some((w) => /parachute pack belongs/.test(w.text));
+  });
+
   check('Warp limiter drops to 1x before a terrain impact', (d) => {
     const f = new SB.Flight(sys, starter);
     f.stage(); f.stage();

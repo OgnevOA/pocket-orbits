@@ -222,8 +222,117 @@
     }
   }
 
+  /** Parachute pack: a metal can; while packed, the folded canopy shows on top in its colours. */
+  function drawChutePack(ctx, d, x, y, s, pt, deployed) {
+    const w = d.width * s, h = d.height * s;
+    const can = y + h * 0.42;
+    ctx.fillStyle = cylGrad(ctx, x - w / 2, x + w / 2, '#9aa3ad');
+    ctx.fillRect(x - w / 2, can, w, y + h - can);
+    ctx.fillStyle = pt.accent;
+    ctx.fillRect(x - w / 2, can + (y + h - can) * 0.35, w, (y + h - can) * 0.22);
+    ctx.beginPath(); ctx.rect(x - w / 2, can, w, y + h - can); outline(ctx, s);
+    if (deployed) { // empty: the open mouth of the can
+      ctx.fillStyle = '#1b2027';
+      ctx.beginPath(); ctx.ellipse(x, can, w * 0.46, Math.max(1, h * 0.1), 0, 0, TAU); ctx.fill();
+      return;
+    }
+    const dome = new Path2D();
+    dome.moveTo(x - w * 0.48, can);
+    dome.bezierCurveTo(x - w * 0.48, y - h * 0.05, x + w * 0.48, y - h * 0.05, x + w * 0.48, can);
+    dome.closePath();
+    ctx.save();
+    ctx.clip(dome);
+    ctx.fillStyle = pt.base;
+    ctx.fillRect(x - w / 2, y - h * 0.1, w, can - y + h * 0.1);
+    ctx.fillStyle = pt.accent;
+    for (let k = -2; k <= 2; k += 2) ctx.fillRect(x + (k / 5 - 0.1) * w * 0.96, y - h * 0.1, w * 0.19, can - y + h * 0.1);
+    cylShade(ctx, x - w / 2, x + w / 2, y - h * 0.1, can - y + h * 0.1);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(8,12,20,0.55)'; ctx.lineWidth = Math.max(0.6, s * 0.025);
+    ctx.stroke(dome);
+  }
+
+  /**
+   * One canopy, skirt centre at the origin, opening upward (-y). D: full diameter (px); open: 0
+   * (a narrow streamer) .. 1 (a full dome). Alternate gores in the accent colour, fanning from the apex.
+   */
+  function drawCanopy(ctx, D, open, pt, gores, s) {
+    const w = D * (0.16 + 0.84 * open), h = D * (0.6 - 0.2 * open);
+    const path = new Path2D();
+    path.moveTo(-w / 2, 0);
+    path.bezierCurveTo(-w * 0.56, -h * 0.72, -w * 0.3, -h, 0, -h);
+    path.bezierCurveTo(w * 0.3, -h, w * 0.56, -h * 0.72, w / 2, 0);
+    path.quadraticCurveTo(0, -h * 0.24, -w / 2, 0);
+    ctx.save();
+    ctx.clip(path);
+    ctx.fillStyle = pt.base;
+    ctx.fillRect(-w, -h * 1.2, 2 * w, h * 1.4);
+    ctx.fillStyle = pt.accent;
+    for (let k = 0; k < gores; k += 2) {
+      const a = -w * 0.6 + (k / gores) * w * 1.2, b = a + (w * 1.2) / gores;
+      ctx.beginPath(); ctx.moveTo(0, -h * 1.05); ctx.lineTo(a, h * 0.1); ctx.lineTo(b, h * 0.1); ctx.closePath(); ctx.fill();
+    }
+    const g = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.38)'); g.addColorStop(0.35, 'rgba(255,255,255,0.14)'); g.addColorStop(1, 'rgba(0,0,0,0.42)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-w, -h * 1.2, 2 * w, h * 1.4);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(8,12,20,0.6)'; ctx.lineWidth = Math.max(0.6, s * 0.04);
+    ctx.stroke(path);
+  }
+
+  /**
+   * The drogues and the three mains of a pack whose top is at (x, yTop), in craft coordinates (the
+   * canopies stream out along the craft axis, -y). c: the pack's chute state. Risers run to the skirt
+   * edges; the canopies sway gently and slightly out of step. Cut drogues drift away and fade;
+   * spent canopies sag sideways and fade.
+   */
+  function drawChuteCluster(ctx, d, x, yTop, s, pt, c, now) {
+    now = now === undefined ? performance.now() : now;
+    const fade = 1 - (c.gone || 0);
+    if (fade <= 0) return;
+    const one = (ang, riser, D, open, alpha, drift, gores) => {
+      if (alpha <= 0.01) return;
+      const L = riser * (0.35 + 0.65 * Math.min(1, open * 3)) * s + drift;
+      const sx = x + Math.sin(ang) * L, sy = yTop - Math.cos(ang) * L;
+      const wOpen = D * s * (0.16 + 0.84 * open);
+      ctx.save();
+      ctx.globalAlpha *= alpha;
+      if (drift <= 0) {
+        ctx.strokeStyle = 'rgba(225,230,238,0.75)';
+        ctx.lineWidth = Math.max(0.5, s * 0.035);
+        ctx.beginPath();
+        for (const side of [-1, 1]) { ctx.moveTo(x, yTop); ctx.lineTo(sx + Math.cos(ang) * side * wOpen / 2, sy + Math.sin(ang) * side * wOpen / 2); }
+        ctx.stroke();
+      }
+      ctx.translate(sx, sy);
+      ctx.rotate(ang);
+      drawCanopy(ctx, D * s, open, pt, gores, s);
+      ctx.restore();
+    };
+    const sag = (c.gone || 0) * 1.3;
+    const sway = (i) => 0.05 * Math.sin(now / 1100 + i * 2.3);
+    // drogues: while open, and drifting away for a moment after they are cut
+    const dOpen = c.stage === 'drogue' ? c.drogue : c.dc || 0;
+    if (dOpen > 0 && (c.stage === 'drogue' || (c.cut || 0) < 1)) {
+      const cut = c.stage === 'drogue' ? 0 : c.cut || 0;
+      for (let i = 0; i < d.drogue.count; i++) {
+        const a = (i - (d.drogue.count - 1) / 2) * 0.4 + sway(i + 5);
+        one(a, d.drogue.riser, d.drogue.size, Math.sqrt(dOpen), 1 - cut, cut * 14 * s, 6);
+      }
+    }
+    if (c.stage === 'main' || c.stage === 'spent') {
+      const order = [1, 0, 2]; // the middle canopy sits behind the other two
+      for (const i of order) {
+        const open = Math.sqrt(c.main[i] || 0) * (1 - 0.7 * (c.gone || 0));
+        const a = (i - 1) * 0.38 + sway(i) + sag;
+        one(a, d.main.riser * (i === 1 ? 1.1 : 1), d.main.size, open, fade, 0, 10);
+      }
+    }
+  }
+
   /** Draws one part with its top centre at (x, y), s px/m, in its paint (or the defaults). */
-  function drawPart(ctx, type, x, y, s, paint) {
+  function drawPart(ctx, type, x, y, s, paint, part) {
     const d = SB.CONFIG.parts[type];
     const pt = SB.Paint ? SB.Paint.resolve(type, paint) : { base: '#cccccc', accent: '#777777', pattern: null };
     switch (SB.Craft.role(type)) {
@@ -232,6 +341,7 @@
       case 'engine': return drawEngine(ctx, d, x, y, s, pt);
       case 'decoupler': return drawDecoupler(ctx, d, x, y, s, pt);
       case 'legs': return drawLegRing(ctx, d, x, y, s, pt);
+      case 'chute': return drawChutePack(ctx, d, x, y, s, pt, !!(part && part.chute && part.chute.stage !== 'packed' && part.chute.stage !== 'armed'));
       default: ctx.fillStyle = '#888'; ctx.fillRect(x - d.width * s / 2, y, d.width * s, d.height * s);
     }
   }
@@ -279,8 +389,11 @@
     }
     for (const p of craft.parts) {
       if (p.role === 'legs') drawLegStruts(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.5) * s, top + g.legReach.get(p.uid) * s, s, strutPaint(p.type, p.paint), p.deploy);
+      if (p.role === 'chute' && p.chute.stage !== 'packed' && p.chute.stage !== 'armed') {
+        drawChuteCluster(ctx, p.def, 0, top + (g.tops.get(p.uid) + p.def.height * 0.4) * s, s, strutPaint(p.type, p.paint), p.chute);
+      }
     }
-    for (const p of craft.parts) drawPart(ctx, p.type, 0, top + g.tops.get(p.uid) * s, s, p.paint);
+    for (const p of craft.parts) drawPart(ctx, p.type, 0, top + g.tops.get(p.uid) * s, s, p.paint, p);
     ctx.restore();
   }
 
@@ -829,7 +942,11 @@
           const dt = mk.t - t;
           if (mk.type === 'ap') label(`Ap ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0], q[1], col, 2, 'ne');
           if (mk.type === 'pe') label(`Pe ${fmtAlt(mk.alt)} · ${fmtDur(dt)}`, q[0], q[1], col, 2, 'se');
-          if (mk.type === 'impact') label(`Impact ${seg.body.name} · ${fmtDur(dt)}`, q[0], q[1], '#ff8a8a', 3, 'e');
+          if (mk.type === 'impact') {
+            // the path ignores drag: under parachutes the touchdown estimate gives the real time
+            const est = layerIdx === 0 && seg.body === f.body ? f.chuteDescent() : null;
+            label(est ? `Touchdown under chutes · ${fmtDur(est.t)}` : `Impact ${seg.body.name} · ${fmtDur(dt)}`, q[0], q[1], est ? '#9dffcf' : '#ff8a8a', 3, 'e');
+          }
           if (mk.type === 'atmo') label('Atmosphere', q[0], q[1], col, 1, 'e');
         }
         if (seg.end && seg.end.type === 'soi' && seg.end.t <= limitT) {
@@ -999,5 +1116,5 @@
     ctx.fillText(`${Math.abs(tilt).toFixed(0)}° ${tilt > 0.5 ? 'R' : tilt < -0.5 ? 'L' : ''}`, c, size - 22);
   }
 
-  SB.Render = { drawPart, drawLegStruts, drawCraft, renderFlight, renderMap, renderDial, drawBodyDisc, fmtAlt, fmtDur, mix, shade, roundRect };
+  SB.Render = { drawPart, drawLegStruts, drawChuteCluster, drawCanopy, drawCraft, renderFlight, renderMap, renderDial, drawBodyDisc, fmtAlt, fmtDur, mix, shade, roundRect };
 })(typeof window !== 'undefined' ? window : globalThis);

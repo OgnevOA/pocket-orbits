@@ -360,6 +360,7 @@ async def run_ui(cdp, base, shots):
 
     await run_maneuver_ui(cdp, shots, report)
     await run_alerts_ui(cdp, shots, report)
+    await run_parachute_ui(cdp, shots, report)
     await run_planet_textures(base, cdp, shots, report)
     await run_audio(base, cdp, shots, report)
 
@@ -768,6 +769,64 @@ async def run_alerts_ui(cdp, shots, report):
            lab["deck"] < deck_flight - 20 and lab["dial"] >= 140 and not lab["clash"] and not lab["hit"] and lab["forced"] == 0 and len(lab["placed"]) >= 5,
            f"deck height {deck_flight:.0f} px in flight, {lab['deck']:.0f} px on the map, dial {lab['dial']:.0f} px; {len(lab['placed'])}/{lab['requested']} labels placed "
            f"around {lab['panels']} panels, {lab['forced']} forced; overlaps {lab['clash']} {lab['hit']}\n       labels: {lab['placed']}")
+    return True
+
+
+async def run_parachute_ui(cdp, shots, report):
+    """Parachutes through the real UI: the preset's staging, arming with Space, drogues then mains, warp and the map."""
+    info = json.loads(await cdp.eval("""(() => { APP.toHangar(); const h = APP.hangar, i = SB.CONFIG.presets.findIndex(p => /parachute/i.test(p.name));
+        h.setDesign(h.preset(i)); h.selected = null; h.render(); h.renderInfo();
+        const steps = [...document.querySelectorAll('#staging .stage-step')];
+        const p = h.design.parts.find(q => q.type === 'chute'), r = h.rects.find(q => q.uid === p.uid), b = h.canvas.getBoundingClientRect();
+        return JSON.stringify({last: steps[steps.length - 1].innerText.replace(/\\s+/g, ' '), x: b.left + (r.x0 + r.x1) / 2, y: b.top + (r.y0 + r.y1) / 2}); })()"""))
+    await cdp.click(info["x"], info["y"])
+    await asyncio.sleep(0.3)
+    name = await cdp.eval("document.getElementById('paintSection').classList.contains('hidden') ? '' : document.getElementById('ppName').textContent")
+    report("Parachutes: the preset fires them as its last stage (CHUTES), and clicking the pack opens its paint panel",
+           "CHUTES" in info["last"] and "Triad Parachute Pack" in info["last"] and name == "Triad Parachute Pack",
+           f"last stage: '{info['last']}'; paint panel for '{name}'")
+
+    await cdp.eval("APP.hangar.selected = null; APP.hangar.render(); true")
+    await cdp.click_el("#btnLaunch")
+    await cdp.wait_for("APP.screen === 'flight'")
+    await cdp.eval("""(() => { const f = APP.flight, P = APP.sys.planet;
+        f.stage(); f.situation = 'flying'; f.stage(); f.setThrottle(0); f.messages = [];
+        const a = P.launchAngle + 0.05, R = APP.sys.surfaceRadius(P, a) + f.geometry().bottomOffset + 2650;
+        f.st.rx = Math.cos(a) * R; f.st.ry = Math.sin(a) * R; f.st.vx = -Math.cos(a) * 60; f.st.vy = -Math.sin(a) * 60;
+        f.heading = a; APP.setView('flight'); APP.flightView.zoom = 5; return true; })()""")
+    state = """JSON.stringify((() => { const f = APP.flight, c = f.craft.parts.find(p => p.role === 'chute').chute;
+        const rows = Object.fromEntries([...document.querySelectorAll('#telemetry .t-row')].map(e => [e.querySelector('span').textContent, e.querySelector('b').textContent]));
+        const err = Math.abs(SB.Orbit.wrapPi(Math.atan2(-f.st.vy, -f.st.vx) - f.heading)) * 180 / Math.PI;
+        return {stage: c.stage, main: c.main.map(x => +x.toFixed(2)), msgs: f.messages.map(m => m.text), whumps: SB.Audio.debug().whumps,
+          chutes: rows['CHUTES'] || '', touchdown: rows['TOUCHDOWN'] || '', tilt: +err.toFixed(1), warp: f.warpRate(), mode: document.getElementById('warpMode').textContent}; })())"""
+    w0 = json.loads(await cdp.eval(state))["whumps"]
+    await cdp.key("Space")
+    await asyncio.sleep(1.0)
+    s1 = json.loads(await cdp.eval(state))
+    await asyncio.sleep(6.5)
+    s2 = json.loads(await cdp.eval(state))
+    if shots:
+        await cdp.shot(os.path.join(shots, "chutes-mains.png"))
+    report("Parachutes: Space arms them; the drogues, then the three mains open with a whump each; the pod hangs upright; the HUD shows the touchdown",
+           s1["stage"] == "drogue" and any("chutes armed" in m for m in s1["msgs"]) and s2["stage"] == "main" and s2["main"] == [1, 1, 1]
+           and s2["whumps"] >= w0 + 2 and s2["chutes"] == "mains open" and "m/s" in s2["touchdown"] and s2["tilt"] < 10,
+           f"after Space: {s1['stage']} {s1['msgs']}; 7.5 s later: {s2['stage']} {s2['main']}, CHUTES '{s2['chutes']}', TOUCHDOWN '{s2['touchdown']}', "
+           f"{s2['tilt']}° from hanging straight; whumps {w0} -> {s2['whumps']}")
+    for _ in range(6):
+        await cdp.key("Period")
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.5)
+    await cdp.key("KeyM")
+    await asyncio.sleep(0.8)
+    s3 = json.loads(await cdp.eval(state))
+    m = json.loads(await cdp.eval("""JSON.stringify({panel: document.getElementById('mapPanel').innerText.replace(/\\s+/g, ' '),
+        label: (APP.mapView.labelInfo.placed.find(p => p.text.startsWith('Touchdown')) || {text: ''}).text})"""))
+    if shots:
+        await cdp.shot(os.path.join(shots, "chutes-map.png"))
+    report("Parachutes: time warp reaches 50x under the open mains (still physics), and the map gives the touchdown time instead of a drag-free impact",
+           s3["warp"] == 50 and s3["mode"] == "physics" and "Touchdown under chutes" in m["panel"] and m["label"].startswith("Touchdown under chutes"),
+           f"warp {s3['warp']}x ({s3['mode']}); map label '{m['label']}'")
+    await cdp.eval("APP.flight.paused = true; APP.setView('flight'); true")
     return True
 
 
